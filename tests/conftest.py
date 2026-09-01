@@ -13,6 +13,8 @@ class FakeIndexRegistry:
         self.rows = {name: {} for name in ("finance", "hr", "tech")}
         self.upsert_calls: list[str] = []
         self.delete_calls: list[str] = []
+        self.search_calls: list[str] = []
+        self.search_results: list[dict] = []
         self.fail_after_upsert = False
 
     def load_all(self) -> None:
@@ -31,6 +33,10 @@ class FakeIndexRegistry:
 
     def verify(self, partition, chunk_ids: list[str]) -> bool:
         return all(chunk_id in self.rows[partition.value] for chunk_id in chunk_ids)
+
+    def search(self, partition, query: str, limit: int = 5) -> list[dict]:
+        self.search_calls.append(partition.value)
+        return self.search_results[:limit]
 
     def health(self) -> dict[str, str]:
         return {name: "ready" for name in self.rows}

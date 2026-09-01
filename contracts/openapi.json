@@ -31,6 +31,102 @@
         "title": "Body_upload_document_api_v1_documents_post",
         "type": "object"
       },
+      "ChatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "partition_hint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Partition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "question": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatResponse": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "answerable": {
+            "title": "Answerable",
+            "type": "boolean"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "code": {
+            "enum": [
+              "OK",
+              "ROUTE_CLARIFICATION_REQUIRED",
+              "NO_INTERNAL_EVIDENCE",
+              "SENSITIVE_INPUT_BLOCKED"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "decision_source": {
+            "$ref": "#/components/schemas/DecisionSource"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "route": {
+            "$ref": "#/components/schemas/RouteName"
+          },
+          "suggested_partitions": {
+            "items": {
+              "$ref": "#/components/schemas/Partition"
+            },
+            "title": "Suggested Partitions",
+            "type": "array"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "required": [
+          "code",
+          "answer",
+          "route",
+          "decision_source",
+          "answerable",
+          "citations",
+          "suggested_partitions",
+          "request_id",
+          "warning"
+        ],
+        "title": "ChatResponse",
+        "type": "object"
+      },
       "ChunkPreviewItem": {
         "properties": {
           "chunk_id": {
@@ -178,6 +274,74 @@
         ],
         "title": "ChunkPreviewResponse",
         "type": "object"
+      },
+      "Citation": {
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "document_id",
+          "title",
+          "section",
+          "page_start",
+          "page_end"
+        ],
+        "title": "Citation",
+        "type": "object"
+      },
+      "DecisionSource": {
+        "enum": [
+          "user_hint",
+          "llm",
+          "safety_fallback"
+        ],
+        "title": "DecisionSource",
+        "type": "string"
       },
       "DocumentDetailResponse": {
         "properties": {
@@ -662,6 +826,16 @@
         "title": "ReviewResponse",
         "type": "object"
       },
+      "RouteName": {
+        "enum": [
+          "finance",
+          "hr",
+          "tech",
+          "clarify"
+        ],
+        "title": "RouteName",
+        "type": "string"
+      },
       "UploadDocumentResponse": {
         "properties": {
           "chunk_count": {
@@ -725,6 +899,67 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/chat": {
+      "post": {
+        "operationId": "chat_api_v1_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Chat",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
     "/api/v1/documents": {
       "get": {
         "operationId": "list_documents_api_v1_documents_get",

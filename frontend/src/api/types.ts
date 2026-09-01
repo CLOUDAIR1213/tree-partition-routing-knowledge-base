@@ -12,6 +12,9 @@ export type ChunkPreviewResponse = components["schemas"]["ChunkPreviewResponse"]
 export type ReviewRequest = components["schemas"]["ReviewRequest"];
 export type ReviewResponse = components["schemas"]["ReviewResponse"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
+export type Citation = components["schemas"]["Citation"];
+export type ChatRequest = components["schemas"]["ChatRequest"];
+export type ChatResponse = components["schemas"]["ChatResponse"];
 
 export type RouteMode = Partition | null;
 
@@ -30,36 +33,4 @@ export interface ListDocumentsParams {
 export interface PreviewParams {
   limit?: number;
   offset?: number;
-}
-
-// The current backend OpenAPI does not expose /chat yet. These types keep the
-// completed chat UI ready for the backend Phase 3/4 contract.
-export interface Citation {
-  chunk_id: string;
-  document_id: string;
-  title: string;
-  section: string | null;
-  page_start: number | null;
-  page_end: number | null;
-}
-
-export interface ChatRequest {
-  question: string;
-  partition_hint: Partition | null;
-}
-
-export interface ChatResponse {
-  code:
-    | "OK"
-    | "ROUTE_CLARIFICATION_REQUIRED"
-    | "NO_INTERNAL_EVIDENCE"
-    | "SENSITIVE_INPUT_BLOCKED";
-  answer: string;
-  route: Partition | "clarify";
-  decision_source: "user_hint" | "llm" | "safety_fallback";
-  answerable: boolean;
-  citations: Citation[];
-  suggested_partitions: Partition[];
-  request_id: string;
-  warning: string | null;
 }

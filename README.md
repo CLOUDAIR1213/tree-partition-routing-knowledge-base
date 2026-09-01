@@ -1,8 +1,10 @@
 # 三分区知识库
 
-本地运行的企业知识库 MVP。后端使用 FastAPI、SQLAlchemy、SQLite 和 txtai；前端使用 React、TypeScript 和 Vite。当前可完整演示文档上传、解析、Chunk 预览、分区复核、批准入库和拒绝流程。
+本地运行的企业知识库 MVP。后端使用 FastAPI、SQLAlchemy、SQLite 和 txtai；前端使用 React、TypeScript 和 Vite。当前可演示文档上传审核，以及在显式选择单一分区后的知识库问答。
 
-当前后端尚未实现 `/api/v1/chat` 和 `/api/v1/route`，因此问答页面已经完成交互界面，但真实问答需要等待后端 Phase 3/4。前端不会把缺少接口误判为问答成功。
+`/api/v1/chat` 已实现输入安全、用户选区优先、单索引检索、`ready` 状态过滤和引用返回。远程 LLM Router 与 `/api/v1/route` 尚未实现，因此自动模式会返回 `clarify`，由用户选择财务、人事或技术分区后继续。
+
+下一阶段的 LLM 单分区/复合分区路由、多索引独立检索和证据式回答方案见 [`docs/chat-composite-routing-plan.md`](docs/chat-composite-routing-plan.md)。该文档是 2026-09-02 的开发计划。
 
 ## 快速启动
 
@@ -61,7 +63,7 @@ PDF 使用 `pypdf` 按页解析，DOCX 使用 `python-docx` 按 Heading 层级�
 
 | 前端页面 | 后端接口 | 说明 |
 | --- | --- | --- |
-| `/` | `POST /api/v1/chat` | 页面已实现，后端接口尚未实现 |
+| `/` | `POST /api/v1/chat` | 显式分区检索并返回回答与引用；自动模式提示选区 |
 | `/knowledge/upload` | `POST /api/v1/documents` | multipart 上传并同步解析，成功状态 201 |
 | `/knowledge/review/:documentId` | `GET /api/v1/documents/{id}` | 刷新页面时重新读取文档状态 |
 | `/knowledge/review/:documentId` | `GET /api/v1/documents/{id}/preview` | 使用 `limit=20&offset=n` 分页读取 Chunk |
@@ -178,9 +180,9 @@ seed 脚本可重复执行，固定文档 ID 和 Chunk ID 通过 txtai `upsert` 
 
 txtai 可能首次下载 `Qwen/Qwen3-Embedding-0.6B`。可以使用 `EMBEDDING_MODEL` 指向本机已经缓存的兼容模型。
 
-### 问答返回接口不存在
+### 自动问答要求选择分区
 
-这是当前实现边界，不是代理故障。后端健康响应中的 `router` 当前为 `not_configured`，并且 OpenAPI 尚无 `/api/v1/chat`。文档上传、审核和入库不受影响。
+后端健康响应中的 `router` 当前为 `not_configured`。自动模式不会猜测业务分区，而是返回三个选区按钮；选择分区后，前端会使用原问题再次请求 `/api/v1/chat`。显式分区问答不依赖远程 LLM Router。
 
 ## 安全边界
 

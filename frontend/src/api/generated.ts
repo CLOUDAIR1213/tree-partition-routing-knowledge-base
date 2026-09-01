@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chat */
+        post: operations["chat_api_v1_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents": {
         parameters: {
             query?: never;
@@ -102,6 +119,34 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** ChatRequest */
+        ChatRequest: {
+            partition_hint?: components["schemas"]["Partition"] | null;
+            /** Question */
+            question: string;
+        };
+        /** ChatResponse */
+        ChatResponse: {
+            /** Answer */
+            answer: string;
+            /** Answerable */
+            answerable: boolean;
+            /** Citations */
+            citations: components["schemas"]["Citation"][];
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "OK" | "ROUTE_CLARIFICATION_REQUIRED" | "NO_INTERNAL_EVIDENCE" | "SENSITIVE_INPUT_BLOCKED";
+            decision_source: components["schemas"]["DecisionSource"];
+            /** Request Id */
+            request_id: string;
+            route: components["schemas"]["RouteName"];
+            /** Suggested Partitions */
+            suggested_partitions: components["schemas"]["Partition"][];
+            /** Warning */
+            warning: string | null;
+        };
         /** ChunkPreviewItem */
         ChunkPreviewItem: {
             /** Chunk Id */
@@ -141,6 +186,26 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Citation */
+        Citation: {
+            /** Chunk Id */
+            chunk_id: string;
+            /** Document Id */
+            document_id: string;
+            /** Page End */
+            page_end: number | null;
+            /** Page Start */
+            page_start: number | null;
+            /** Section */
+            section: string | null;
+            /** Title */
+            title: string;
+        };
+        /**
+         * DecisionSource
+         * @enum {string}
+         */
+        DecisionSource: "user_hint" | "llm" | "safety_fallback";
         /** DocumentDetailResponse */
         DocumentDetailResponse: {
             /** Chunk Count */
@@ -311,6 +376,11 @@ export interface components {
             selected_partition: components["schemas"]["Partition"];
             status: components["schemas"]["DocumentStatus"];
         };
+        /**
+         * RouteName
+         * @enum {string}
+         */
+        RouteName: "finance" | "hr" | "tech" | "clarify";
         /** UploadDocumentResponse */
         UploadDocumentResponse: {
             /** Chunk Count */
@@ -336,6 +406,57 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    chat_api_v1_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_documents_api_v1_documents_get: {
         parameters: {
             query?: {

@@ -3,7 +3,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import DocumentStatus, Partition, ReviewAction
+from app.models.enums import (
+    DecisionSource,
+    DocumentStatus,
+    Partition,
+    ReviewAction,
+    RouteName,
+    SafetyAction,
+)
 
 
 class StrictApiRequest(BaseModel):
@@ -15,6 +22,57 @@ class ReviewRequest(StrictApiRequest):
     confirmed_partition: Partition | None = None
     reviewer_name: str | None = Field(default=None, max_length=100)
     note: str | None = Field(default=None, max_length=500)
+
+
+class ChatRequest(StrictApiRequest):
+    question: str = Field(min_length=1, max_length=2000)
+    partition_hint: Partition | None = None
+
+
+class Citation(BaseModel):
+    chunk_id: str
+    document_id: str
+    title: str
+    section: str | None
+    page_start: int | None
+    page_end: int | None
+
+
+class ChatResponse(BaseModel):
+    code: Literal[
+        "OK",
+        "ROUTE_CLARIFICATION_REQUIRED",
+        "NO_INTERNAL_EVIDENCE",
+        "SENSITIVE_INPUT_BLOCKED",
+    ]
+    answer: str
+    route: RouteName
+    decision_source: DecisionSource
+    answerable: bool
+    citations: list[Citation]
+    suggested_partitions: list[Partition]
+    request_id: str
+    warning: str | None
+
+
+class SafetyDecision(BaseModel):
+    action: SafetyAction
+    safe_question: str | None
+    detected_types: list[str]
+    message: str | None = None
+
+
+class RetrievalHit(BaseModel):
+    chunk_id: str
+    document_id: str
+    partition: Partition
+    text: str
+    score: float
+    title: str
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+
 
 class UploadDocumentResponse(BaseModel):
     document_id: str
