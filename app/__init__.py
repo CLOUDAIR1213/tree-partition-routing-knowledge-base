@@ -1,0 +1,2 @@
+"""Partitioned knowledge base application."""
+

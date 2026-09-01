@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+data/raw/*
+!data/raw/.gitkeep
+data/staging/*
+!data/staging/.gitkeep
+data/indexes/*/*
+!data/indexes/*/.gitkeep
+data/metadata/*
+!data/metadata/.gitkeep
+evaluation/reports/*
+

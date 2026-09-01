@@ -1,0 +1,53 @@
+from collections.abc import AsyncIterator
+
+from sqlalchemy import event, update
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.db.base import Base
+from app.db.tables import DocumentTable
+from app.models.enums import DocumentStatus
+
+
+class Database:
+    def __init__(self, url: str) -> None:
+        self.engine: AsyncEngine = create_async_engine(url)
+        if url.startswith("sqlite"):
+            @event.listens_for(self.engine.sync_engine, "connect")
+            def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+        self.session_factory = async_sessionmaker(
+            self.engine, expire_on_commit=False, class_=AsyncSession
+        )
+
+    async def initialize(self) -> None:
+        async with self.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        await self.mark_interrupted_indexing_failed()
+
+    async def mark_interrupted_indexing_failed(self) -> None:
+        async with self.session_factory() as session:
+            await session.execute(
+                update(DocumentTable)
+                .where(DocumentTable.status == DocumentStatus.INDEXING.value)
+                .values(
+                    status=DocumentStatus.FAILED.value,
+                    error_code="INDEX_RECOVERY_REQUIRED",
+                    error_message="应用启动时发现未完成的索引写入，需要人工重试",
+                )
+            )
+            await session.commit()
+
+    async def session(self) -> AsyncIterator[AsyncSession]:
+        async with self.session_factory() as session:
+            yield session
+
+    async def close(self) -> None:
+        await self.engine.dispose()
+
