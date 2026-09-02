@@ -6,7 +6,20 @@ const successResponse = {
   route: "finance",
   decision_source: "llm",
   answerable: true,
-  citations: [],
+  answer_source: "internal",
+  searched_partitions: ["finance"],
+  citations: [
+    {
+      partition: "finance",
+      chunk_id: "chunk-1",
+      document_id: "doc-1",
+      title: "费用制度",
+      section: null,
+      page_start: null,
+      page_end: null,
+    },
+  ],
+  web_citations: [],
   suggested_partitions: [],
   request_id: "req-success",
   warning: null,
@@ -23,6 +36,7 @@ describe("API client", () => {
     const response = await knowledgeApi.chat({
       question: "如何报销？",
       partition_hint: null,
+      allow_web_fallback: false,
     });
 
     expect(response.request_id).toBe("req-success");
@@ -30,7 +44,11 @@ describe("API client", () => {
       "/api/v1/chat",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ question: "如何报销？", partition_hint: null }),
+        body: JSON.stringify({
+          question: "如何报销？",
+          partition_hint: null,
+          allow_web_fallback: false,
+        }),
         headers: expect.any(Headers),
       }),
     );
@@ -79,6 +97,9 @@ describe("API client", () => {
           answer: "请选择分区",
           route: "clarify",
           answerable: false,
+          answer_source: "none",
+          searched_partitions: [],
+          citations: [],
           suggested_partitions: ["finance", "hr", "tech"],
         }),
         { status: 200 },
@@ -88,6 +109,7 @@ describe("API client", () => {
     const response = await knowledgeApi.chat({
       question: "制度是什么？",
       partition_hint: null,
+      allow_web_fallback: false,
     });
 
     expect(response.code).toBe("ROUTE_CLARIFICATION_REQUIRED");

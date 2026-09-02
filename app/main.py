@@ -18,6 +18,8 @@ def create_app(
     settings: Settings | None = None,
     *,
     index_registry=None,
+    llm_provider=None,
+    web_search_provider=None,
 ) -> FastAPI:
     settings = settings or get_settings()
 
@@ -33,9 +35,23 @@ def create_app(
         else:
             registry = index_registry
         registry.load_all()
+        if llm_provider is None:
+            from app.services.llm import build_llm_provider
+
+            provider = build_llm_provider(settings)
+        else:
+            provider = llm_provider
+        if web_search_provider is None:
+            from app.services.web_search import build_web_search_provider
+
+            search_provider = build_web_search_provider(settings)
+        else:
+            search_provider = web_search_provider
         app.state.settings = settings
         app.state.database = database
         app.state.index_registry = registry
+        app.state.llm_provider = provider
+        app.state.web_search_provider = search_provider
         try:
             yield
         finally:

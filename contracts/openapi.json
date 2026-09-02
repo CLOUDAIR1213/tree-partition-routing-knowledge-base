@@ -1,6 +1,15 @@
 {
   "components": {
     "schemas": {
+      "AnswerSource": {
+        "enum": [
+          "internal",
+          "web",
+          "none"
+        ],
+        "title": "AnswerSource",
+        "type": "string"
+      },
       "Body_upload_document_api_v1_documents_post": {
         "properties": {
           "file": {
@@ -34,6 +43,11 @@
       "ChatRequest": {
         "additionalProperties": false,
         "properties": {
+          "allow_web_fallback": {
+            "default": false,
+            "title": "Allow Web Fallback",
+            "type": "boolean"
+          },
           "partition_hint": {
             "anyOf": [
               {
@@ -62,6 +76,9 @@
           "answer": {
             "title": "Answer",
             "type": "string"
+          },
+          "answer_source": {
+            "$ref": "#/components/schemas/AnswerSource"
           },
           "answerable": {
             "title": "Answerable",
@@ -94,6 +111,13 @@
           "route": {
             "$ref": "#/components/schemas/RouteName"
           },
+          "searched_partitions": {
+            "items": {
+              "$ref": "#/components/schemas/Partition"
+            },
+            "title": "Searched Partitions",
+            "type": "array"
+          },
           "suggested_partitions": {
             "items": {
               "$ref": "#/components/schemas/Partition"
@@ -111,6 +135,13 @@
               }
             ],
             "title": "Warning"
+          },
+          "web_citations": {
+            "items": {
+              "$ref": "#/components/schemas/WebCitation"
+            },
+            "title": "Web Citations",
+            "type": "array"
           }
         },
         "required": [
@@ -119,7 +150,10 @@
           "route",
           "decision_source",
           "answerable",
+          "answer_source",
+          "searched_partitions",
           "citations",
+          "web_citations",
           "suggested_partitions",
           "request_id",
           "warning"
@@ -307,6 +341,9 @@
             ],
             "title": "Page Start"
           },
+          "partition": {
+            "$ref": "#/components/schemas/Partition"
+          },
           "section": {
             "anyOf": [
               {
@@ -324,6 +361,7 @@
           }
         },
         "required": [
+          "partition",
           "chunk_id",
           "document_id",
           "title",
@@ -625,6 +663,15 @@
       },
       "HealthResponse": {
         "properties": {
+          "answer": {
+            "enum": [
+              "configured",
+              "extractive",
+              "not_configured"
+            ],
+            "title": "Answer",
+            "type": "string"
+          },
           "indexes": {
             "$ref": "#/components/schemas/IndexHealth"
           },
@@ -655,6 +702,15 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "web_search": {
+            "enum": [
+              "configured",
+              "disabled",
+              "not_configured"
+            ],
+            "title": "Web Search",
+            "type": "string"
           }
         },
         "required": [
@@ -662,6 +718,8 @@
           "metadata_database",
           "indexes",
           "router",
+          "answer",
+          "web_search",
           "request_id"
         ],
         "title": "HealthResponse",
@@ -831,6 +889,7 @@
           "finance",
           "hr",
           "tech",
+          "composite",
           "clarify"
         ],
         "title": "RouteName",
@@ -889,6 +948,29 @@
           "request_id"
         ],
         "title": "UploadDocumentResponse",
+        "type": "object"
+      },
+      "WebCitation": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url",
+          "domain"
+        ],
+        "title": "WebCitation",
         "type": "object"
       }
     }

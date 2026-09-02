@@ -20,11 +20,20 @@ async def health(request: Request) -> HealthResponse:
     except Exception:  # noqa: BLE001
         database_status = "error"
     indexes = request.app.state.index_registry.health()
-    router_status = (
-        "configured"
-        if request.app.state.settings.llm_model
-        and request.app.state.settings.llm_base_url
-        and request.app.state.settings.llm_api_key
+    settings = request.app.state.settings
+    router_status = "configured" if settings.router_configured else "not_configured"
+    answer_status = (
+        "extractive"
+        if settings.answer_mode == "extractive"
+        else "configured"
+        if settings.answer_configured
+        else "not_configured"
+    )
+    web_search_status = (
+        "disabled"
+        if not settings.web_search_enabled
+        else "configured"
+        if settings.web_search_configured
         else "not_configured"
     )
     payload = HealthResponse(
@@ -36,6 +45,8 @@ async def health(request: Request) -> HealthResponse:
         metadata_database=database_status,
         indexes=IndexHealth(**indexes),
         router=router_status,
+        answer=answer_status,
+        web_search=web_search_status,
         request_id=request.state.request_id,
     )
     if payload.status == "degraded":

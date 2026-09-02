@@ -1,7 +1,7 @@
 # `/chat` 复合路由与多分区问答开发计划
 
 > 计划日期：2026-09-02  
-> 状态：待开发  
+> 状态：已实现，等待模型配置与代码健康验证
 > 设计性质：对 Round 1 单分区 MVP 的增量扩展，不覆盖原始规格的历史结论。
 
 ## 1. 背景与目标
@@ -283,3 +283,13 @@ ANSWER_MODE=llm
 - OpenAI-compatible Provider 的实际 Base URL 和模型名称。
 - Router 与 Answer 是否使用同一模型；默认支持分别配置。
 - 当复合问题只有一个分区命中证据时，采用“部分回答并提示缺失”策略。
+
+## 13. 2026-09-02 实施记录
+
+- 已增加 OpenAI-compatible LLM Provider，API 配置只从根目录 `.env` 读取。
+- 已实现 `single | composite | clarify` Router 结构化输出和一次修复重试。
+- 已实现最多两个分区的独立检索、证据分组和跨分区分数隔离。
+- 已实现 Answer LLM、引用 Chunk 白名单校验和抽取式降级。
+- 已扩展 `/chat` 响应：`route=composite`、`searched_partitions` 和 Citation `partition`。
+- 已同步健康检查和前端复合分区元数据、引用分组展示。
+- 按用户要求，真实模型配置和所有测试执行暂缓，待 `.env` 中的模型 API 填写后进行。

@@ -11,6 +11,13 @@ class RouteName(StrEnum):
     FINANCE = "finance"
     HR = "hr"
     TECH = "tech"
+    COMPOSITE = "composite"
+    CLARIFY = "clarify"
+
+
+class RouteKind(StrEnum):
+    SINGLE = "single"
+    COMPOSITE = "composite"
     CLARIFY = "clarify"
 
 
@@ -24,6 +31,12 @@ class SafetyAction(StrEnum):
     SAFE = "safe"
     REDACTED = "redacted"
     BLOCKED = "blocked"
+
+
+class AnswerSource(StrEnum):
+    INTERNAL = "internal"
+    WEB = "web"
+    NONE = "none"
 
 
 class DocumentStatus(StrEnum):

@@ -14,7 +14,9 @@ class FakeIndexRegistry:
         self.upsert_calls: list[str] = []
         self.delete_calls: list[str] = []
         self.search_calls: list[str] = []
-        self.search_results: list[dict] = []
+        self.search_results: dict[str, list[dict]] = {
+            name: [] for name in ("finance", "hr", "tech")
+        }
         self.fail_after_upsert = False
 
     def load_all(self) -> None:
@@ -36,7 +38,7 @@ class FakeIndexRegistry:
 
     def search(self, partition, query: str, limit: int = 5) -> list[dict]:
         self.search_calls.append(partition.value)
-        return self.search_results[:limit]
+        return self.search_results[partition.value][:limit]
 
     def health(self) -> dict[str, str]:
         return {name: "ready" for name in self.rows}
@@ -60,6 +62,14 @@ def client(tmp_path: Path, fake_registry: FakeIndexRegistry) -> Iterator[TestCli
         index_root=data_root / "indexes",
         fixture_root=data_root / "fixtures",
         metadata_database_url=f"sqlite+aiosqlite:///{(data_root / 'metadata' / 'knowledge.db').as_posix()}",
+        llm_base_url="",
+        llm_api_key="",
+        llm_model="",
+        router_llm_model="",
+        answer_llm_model="",
+        answer_mode="llm",
+        web_search_enabled=False,
+        web_search_api_key="",
     )
     with TestClient(create_app(settings, index_registry=fake_registry)) as test_client:
         yield test_client

@@ -17,6 +17,7 @@ import type {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 const DEFAULT_TIMEOUT_MS = 30_000;
+const CHAT_TIMEOUT_MS = 100_000;
 
 export class ApiError extends Error {
   constructor(
@@ -98,15 +99,75 @@ const validCodes = new Set([
   "NO_INTERNAL_EVIDENCE",
   "SENSITIVE_INPUT_BLOCKED",
 ]);
-const validRoutes = new Set<Partition | "clarify">([
+const validRoutes = new Set<Partition | "composite" | "clarify">([
   "finance",
   "hr",
   "tech",
+  "composite",
   "clarify",
 ]);
+const validPartitions = new Set<Partition>(["finance", "hr", "tech"]);
+const validAnswerSources = new Set(["internal", "web", "none"]);
+
+function isSafeWebCitation(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const citation = value as Record<string, unknown>;
+  if (
+    typeof citation.title !== "string" ||
+    typeof citation.domain !== "string" ||
+    typeof citation.url !== "string"
+  ) {
+    return false;
+  }
+  try {
+    return new URL(citation.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 function assertChatContract(response: ChatResponse): ChatResponse {
-  if (!validCodes.has(response.code) || !validRoutes.has(response.route)) {
+  const searchedPartitions = Array.isArray(response.searched_partitions)
+    ? response.searched_partitions
+    : [];
+  const uniqueSearchedPartitions = new Set(searchedPartitions);
+  const validSearchedPartitions =
+    Array.isArray(response.searched_partitions) &&
+    searchedPartitions.every((partition) => validPartitions.has(partition));
+  const validRouteShape =
+    response.route === "clarify"
+      ? searchedPartitions.length === 0
+      : response.route === "composite"
+        ? searchedPartitions.length === 2 && uniqueSearchedPartitions.size === 2
+        : searchedPartitions.length === 1 &&
+          searchedPartitions[0] === response.route;
+  const validCitations =
+    Array.isArray(response.citations) &&
+    response.citations.every(
+      (citation) =>
+        validPartitions.has(citation.partition) &&
+        uniqueSearchedPartitions.has(citation.partition),
+    );
+  const validWebCitations =
+    Array.isArray(response.web_citations) &&
+    response.web_citations.every(isSafeWebCitation);
+  const validSourceShape =
+    validAnswerSources.has(response.answer_source) &&
+    response.answerable === (response.answer_source !== "none") &&
+    (response.answer_source === "internal"
+      ? response.citations.length > 0 && response.web_citations.length === 0
+      : response.answer_source === "web"
+        ? response.citations.length === 0 && response.web_citations.length > 0
+        : response.citations.length === 0 && response.web_citations.length === 0);
+  if (
+    !validCodes.has(response.code) ||
+    !validRoutes.has(response.route) ||
+    !validSearchedPartitions ||
+    !validRouteShape ||
+    !validCitations ||
+    !validWebCitations ||
+    !validSourceShape
+  ) {
     throw new Error("后端返回了前端尚未支持的问答状态");
   }
   return response;
@@ -117,7 +178,7 @@ export const knowledgeApi = {
     const response = await apiFetch<ChatResponse>("/api/v1/chat", {
       method: "POST",
       body: JSON.stringify(input),
-    });
+    }, CHAT_TIMEOUT_MS);
     return assertChatContract(response);
   },
 };

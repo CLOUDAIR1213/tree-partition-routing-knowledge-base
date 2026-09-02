@@ -58,9 +58,17 @@ export function ChatPage() {
   const [routeMode, setRouteMode] = useState<RouteMode>(
     isPartition(hintedPartition) ? hintedPartition : null,
   );
-  const [loading, setLoading] = useState(false);
-  const [pageError, setPageError] = useState<string | null>(null);
-  const { activeConversation, appendMessage } = useChatSession();
+  const [allowWebFallback, setAllowWebFallback] = useState(false);
+  const {
+    activeConversation,
+    appendMessage,
+    startRequest,
+    finishRequest,
+    failRequest,
+    getConversationRuntime,
+  } = useChatSession();
+  const runtime = getConversationRuntime(activeConversation.id);
+  const loading = runtime.pendingRequestIds.length > 0;
   const hasMessages = activeConversation.messages.length > 0;
 
   useEffect(() => {
@@ -69,38 +77,50 @@ export function ChatPage() {
 
   async function ask(question: string, partition = routeMode): Promise<boolean> {
     if (loading) return false;
-    setLoading(true);
-    setPageError(null);
+    const requestContext = {
+      requestId: messageId(),
+      conversationId: activeConversation.id,
+      userMessageId: messageId(),
+      assistantMessageId: messageId(),
+    };
+    appendMessage(requestContext.conversationId, {
+      id: requestContext.userMessageId,
+      role: "user",
+      content: question,
+    });
+    startRequest(requestContext.conversationId, requestContext.requestId);
 
     try {
       const response = await knowledgeApi.chat({
         question,
         partition_hint: partition,
+        allow_web_fallback: allowWebFallback,
       });
-      const userMessage: ChatMessage = {
-        id: messageId(),
-        role: "user",
-        content: question,
-      };
       const assistantMessage: ChatMessage = {
-        id: messageId(),
+        id: requestContext.assistantMessageId,
         role: "assistant",
         content: responseText(response),
         citations: response.citations,
+        webCitations: response.web_citations,
         code: response.code,
+        answerSource: response.answer_source,
         route: response.route,
+        searchedPartitions: response.searched_partitions,
         suggestedPartitions: response.suggested_partitions,
         requestId: response.request_id,
         warning: response.warning,
       };
-      appendMessage(userMessage);
-      appendMessage(assistantMessage);
+      appendMessage(requestContext.conversationId, assistantMessage);
+      finishRequest(requestContext.conversationId, requestContext.requestId);
       return true;
     } catch (error) {
-      setPageError(errorText(error));
+      failRequest(
+        requestContext.conversationId,
+        requestContext.requestId,
+        errorText(error),
+        question,
+      );
       return false;
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -121,9 +141,9 @@ export function ChatPage() {
             messages={activeConversation.messages}
             onChoosePartition={chooseSuggestedPartition}
           />
-          {pageError && (
+          {runtime.error && (
             <div className="page-alert" role="alert">
-              {pageError}
+              {runtime.error}
             </div>
           )}
           <div className="thread-controls">
@@ -134,10 +154,12 @@ export function ChatPage() {
               value={routeMode}
             />
             <ChatComposer
+              allowWebFallback={allowWebFallback}
               compact
+              restoreValue={runtime.retryQuestion}
               loading={loading}
+              onAllowWebFallbackChange={setAllowWebFallback}
               onSubmit={ask}
-              routeMode={routeMode}
             />
           </div>
         </div>
@@ -155,10 +177,16 @@ export function ChatPage() {
             onChange={setRouteMode}
             value={routeMode}
           />
-          <ChatComposer loading={loading} onSubmit={ask} routeMode={routeMode} />
-          {pageError && (
+          <ChatComposer
+            allowWebFallback={allowWebFallback}
+            loading={loading}
+            onAllowWebFallbackChange={setAllowWebFallback}
+            onSubmit={ask}
+            restoreValue={runtime.retryQuestion}
+          />
+          {runtime.error && (
             <div className="page-alert empty-page-alert" role="alert">
-              {pageError}
+              {runtime.error}
             </div>
           )}
         </div>

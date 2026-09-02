@@ -1,4 +1,4 @@
-import { BookOpen, Database, ShieldAlert } from "lucide-react";
+import { BookOpen, Database, Globe2, ShieldAlert } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Partition } from "../../api/types";
 import { getRouteLabel, partitionLabels } from "../../constants/partitions";
@@ -14,6 +14,29 @@ function pageLabel(start: number | null, end: number | null) {
   if (start === null) return null;
   if (end === null || end === start) return `第 ${start} 页`;
   return `第 ${start}-${end} 页`;
+}
+
+function messageRouteLabel(message: ChatMessage) {
+  if (message.route !== "composite") return getRouteLabel(message.route ?? null);
+  return (message.searchedPartitions ?? [])
+    .map((partition) => partitionLabels[partition])
+    .join(" + ") || "复合";
+}
+
+function messageSourceLabel(message: ChatMessage) {
+  if (message.answerSource === "web") return "公开网络信息";
+  return `${messageRouteLabel(message)}分区`;
+}
+
+function groupCitations(message: ChatMessage) {
+  return (message.searchedPartitions ?? [])
+    .map((partition) => ({
+      partition,
+      citations: (message.citations ?? []).filter(
+        (citation) => citation.partition === partition,
+      ),
+    }))
+    .filter((group) => group.citations.length > 0);
 }
 
 export function MessageList({
@@ -35,6 +58,8 @@ export function MessageList({
             <div className="assistant-mark" aria-hidden="true">
               {message.code === "SENSITIVE_INPUT_BLOCKED" ? (
                 <ShieldAlert size={16} />
+              ) : message.answerSource === "web" ? (
+                <Globe2 size={16} />
               ) : (
                 <Database size={15} />
               )}
@@ -43,7 +68,7 @@ export function MessageList({
           <div className="message-body">
             {message.role === "assistant" && message.route && (
               <div className="message-meta">
-                {getRouteLabel(message.route)}分区
+                {messageSourceLabel(message)}
               </div>
             )}
             <p>{message.content}</p>
@@ -69,20 +94,47 @@ export function MessageList({
                   <BookOpen aria-hidden="true" size={14} />
                   来源
                 </h3>
+                {groupCitations(message).map((group) => (
+                  <div className="citation-group" key={group.partition}>
+                    <h4>{partitionLabels[group.partition]}</h4>
+                    <ol>
+                      {group.citations.map((citation) => {
+                        const page = pageLabel(
+                          citation.page_start,
+                          citation.page_end,
+                        );
+                        return (
+                          <li key={citation.chunk_id}>
+                            <span className="citation-title">{citation.title}</span>
+                            <span className="citation-detail">
+                              {[citation.section, page, citation.chunk_id]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                ))}
+              </section>
+            )}
+
+            {!!message.webCitations?.length && (
+              <section className="citations web-citations" aria-label="公开网络来源">
+                <h3>
+                  <Globe2 aria-hidden="true" size={14} />
+                  公开网络来源
+                </h3>
                 <ol>
-                  {message.citations.map((citation) => {
-                    const page = pageLabel(citation.page_start, citation.page_end);
-                    return (
-                      <li key={citation.chunk_id}>
+                  {message.webCitations.map((citation) => (
+                    <li key={citation.url}>
+                      <a href={citation.url} rel="noreferrer" target="_blank">
                         <span className="citation-title">{citation.title}</span>
-                        <span className="citation-detail">
-                          {[citation.section, page, citation.chunk_id]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </span>
-                      </li>
-                    );
-                  })}
+                        <span className="citation-detail">{citation.domain}</span>
+                      </a>
+                    </li>
+                  ))}
                 </ol>
               </section>
             )}

@@ -38,8 +38,9 @@ export const partitionLabels: Record<Partition, string> = {
   tech: "技术",
 };
 
-export function getRouteLabel(value: RouteMode | "clarify") {
+export function getRouteLabel(value: RouteMode | "composite" | "clarify") {
   if (value === null) return "自动路由";
+  if (value === "composite") return "复合";
   if (value === "clarify") return "待确认";
   return partitionLabels[value];
 }

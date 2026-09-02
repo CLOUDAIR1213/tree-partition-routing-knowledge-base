@@ -1,27 +1,33 @@
-import { ArrowUp, LoaderCircle } from "lucide-react";
+import { ArrowUp, Globe2, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { RouteMode } from "../../api/types";
-import { getRouteLabel } from "../../constants/partitions";
 
 interface ChatComposerProps {
-  routeMode: RouteMode;
   loading: boolean;
   onSubmit: (question: string) => Promise<boolean>;
+  allowWebFallback: boolean;
+  onAllowWebFallbackChange: (allowed: boolean) => void;
+  restoreValue?: string | null;
   compact?: boolean;
 }
 
 const MAX_QUESTION_LENGTH = 2000;
 
 export function ChatComposer({
-  routeMode,
   loading,
   onSubmit,
+  allowWebFallback,
+  onAllowWebFallbackChange,
+  restoreValue,
   compact = false,
 }: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmed = value.trim();
+
+  useEffect(() => {
+    if (restoreValue) setValue(restoreValue);
+  }, [restoreValue]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -48,7 +54,7 @@ export function ChatComposer({
           输入知识库问题
         </label>
         <textarea
-          aria-describedby={error ? "question-error" : "route-mode-note"}
+          aria-describedby={error ? "question-error" : undefined}
           disabled={loading}
           id="chat-question"
           maxLength={MAX_QUESTION_LENGTH + 1}
@@ -68,9 +74,26 @@ export function ChatComposer({
           value={value}
         />
         <div className="composer-footer">
-          <span id="route-mode-note">
-            当前：<strong>{getRouteLabel(routeMode)}</strong>
-          </span>
+          <button
+            aria-label={
+              allowWebFallback
+                ? "已开启：知识库未命中时联网搜索"
+                : "未命中时联网"
+            }
+            aria-pressed={allowWebFallback}
+            className="web-fallback-toggle"
+            disabled={loading}
+            onClick={() => onAllowWebFallbackChange(!allowWebFallback)}
+            title={
+              allowWebFallback
+                ? "已开启：知识库未命中时联网搜索"
+                : "未命中时联网"
+            }
+            type="button"
+          >
+            <Globe2 aria-hidden="true" size={16} />
+            <span className="sr-only">未命中时联网</span>
+          </button>
           <button
             aria-label={loading ? "正在发送" : "发送问题"}
             className="send-button"
@@ -81,7 +104,7 @@ export function ChatComposer({
             {loading ? (
               <LoaderCircle aria-hidden="true" className="spin" size={18} />
             ) : (
-              <ArrowUp aria-hidden="true" size={19} strokeWidth={2.1} />
+              <ArrowUp aria-hidden="true" size={17} strokeWidth={2.1} />
             )}
           </button>
         </div>

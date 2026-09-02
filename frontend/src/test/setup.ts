@@ -9,4 +9,5 @@ Object.defineProperty(Element.prototype, "scrollIntoView", {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
 });

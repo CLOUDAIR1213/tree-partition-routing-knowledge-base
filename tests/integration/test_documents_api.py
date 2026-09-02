@@ -121,6 +121,9 @@ def test_list_pagination_and_health(client):
     health = client.get("/api/v1/health")
     assert health.status_code == 200
     assert health.json()["indexes"] == {"finance": "ready", "hr": "ready", "tech": "ready"}
+    assert health.json()["router"] == "not_configured"
+    assert health.json()["answer"] == "not_configured"
+    assert health.json()["web_search"] == "disabled"
 
 
 def test_framework_404_uses_error_contract(client):

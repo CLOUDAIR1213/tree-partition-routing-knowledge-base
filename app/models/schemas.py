@@ -1,13 +1,15 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import (
+    AnswerSource,
     DecisionSource,
     DocumentStatus,
     Partition,
     ReviewAction,
+    RouteKind,
     RouteName,
     SafetyAction,
 )
@@ -27,15 +29,23 @@ class ReviewRequest(StrictApiRequest):
 class ChatRequest(StrictApiRequest):
     question: str = Field(min_length=1, max_length=2000)
     partition_hint: Partition | None = None
+    allow_web_fallback: bool = False
 
 
 class Citation(BaseModel):
+    partition: Partition
     chunk_id: str
     document_id: str
     title: str
     section: str | None
     page_start: int | None
     page_end: int | None
+
+
+class WebCitation(BaseModel):
+    title: str
+    url: str
+    domain: str
 
 
 class ChatResponse(BaseModel):
@@ -49,10 +59,38 @@ class ChatResponse(BaseModel):
     route: RouteName
     decision_source: DecisionSource
     answerable: bool
+    answer_source: AnswerSource
+    searched_partitions: list[Partition]
     citations: list[Citation]
+    web_citations: list[WebCitation]
     suggested_partitions: list[Partition]
     request_id: str
     warning: str | None
+
+    @model_validator(mode="after")
+    def validate_route_metadata(self) -> "ChatResponse":
+        unique_partitions = set(self.searched_partitions)
+        if self.route == RouteName.CLARIFY:
+            if self.searched_partitions:
+                raise ValueError("clarify response cannot contain searched partitions")
+        elif self.route == RouteName.COMPOSITE:
+            if len(self.searched_partitions) != 2 or len(unique_partitions) != 2:
+                raise ValueError("composite response requires two searched partitions")
+        elif self.searched_partitions != [Partition(self.route.value)]:
+            raise ValueError("single route must match its searched partition")
+        if any(item.partition not in unique_partitions for item in self.citations):
+            raise ValueError("citation partition was not searched")
+        if self.answerable != (self.answer_source != AnswerSource.NONE):
+            raise ValueError("answerable must match answer source")
+        if self.answer_source == AnswerSource.INTERNAL:
+            if not self.citations or self.web_citations:
+                raise ValueError("internal answer requires only internal citations")
+        elif self.answer_source == AnswerSource.WEB:
+            if self.citations or not self.web_citations:
+                raise ValueError("web answer requires only web citations")
+        elif self.citations or self.web_citations:
+            raise ValueError("unanswerable response cannot contain citations")
+        return self
 
 
 class SafetyDecision(BaseModel):
@@ -72,6 +110,68 @@ class RetrievalHit(BaseModel):
     section: str | None = None
     page_start: int | None = None
     page_end: int | None = None
+
+
+class RoutedSubquery(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    partition: Partition
+    query: str = Field(min_length=1, max_length=2000)
+
+
+class LLMRoutePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    route_kind: RouteKind
+    subqueries: list[RoutedSubquery]
+    needs_clarification: bool
+    reason_code: Literal[
+        "finance_policy",
+        "hr_policy",
+        "technical_operation",
+        "multi_intent",
+        "missing_context",
+        "ambiguous_domain",
+    ]
+
+    @model_validator(mode="after")
+    def validate_route_shape(self) -> "LLMRoutePlan":
+        if self.route_kind == RouteKind.SINGLE:
+            if len(self.subqueries) != 1 or self.needs_clarification:
+                raise ValueError("single route must contain one subquery")
+        elif self.route_kind == RouteKind.COMPOSITE:
+            partitions = {item.partition for item in self.subqueries}
+            if (
+                len(self.subqueries) != 2
+                or len(partitions) != 2
+                or self.needs_clarification
+            ):
+                raise ValueError(
+                    "composite route must contain two distinct partition subqueries"
+                )
+        elif self.subqueries or not self.needs_clarification:
+            raise ValueError("clarify route cannot contain subqueries")
+        return self
+
+
+class RetrievalGroup(BaseModel):
+    partition: Partition
+    query: str
+    hits: list[RetrievalHit]
+
+
+class LLMAnswerDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    answer: str = Field(min_length=1)
+    citation_chunk_ids: list[str]
+
+
+class LLMWebAnswerDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    answer: str = Field(min_length=1)
+    citation_urls: list[str]
 
 
 class UploadDocumentResponse(BaseModel):
@@ -161,6 +261,8 @@ class HealthResponse(BaseModel):
     metadata_database: Literal["ok", "error"]
     indexes: IndexHealth
     router: Literal["configured", "not_configured"]
+    answer: Literal["configured", "extractive", "not_configured"]
+    web_search: Literal["configured", "disabled", "not_configured"]
     request_id: str
 
 

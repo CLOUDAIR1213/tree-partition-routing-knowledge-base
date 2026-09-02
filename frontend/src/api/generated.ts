@@ -111,6 +111,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnswerSource
+         * @enum {string}
+         */
+        AnswerSource: "internal" | "web" | "none";
         /** Body_upload_document_api_v1_documents_post */
         Body_upload_document_api_v1_documents_post: {
             /** File */
@@ -121,6 +126,11 @@ export interface components {
         };
         /** ChatRequest */
         ChatRequest: {
+            /**
+             * Allow Web Fallback
+             * @default false
+             */
+            allow_web_fallback: boolean;
             partition_hint?: components["schemas"]["Partition"] | null;
             /** Question */
             question: string;
@@ -129,6 +139,7 @@ export interface components {
         ChatResponse: {
             /** Answer */
             answer: string;
+            answer_source: components["schemas"]["AnswerSource"];
             /** Answerable */
             answerable: boolean;
             /** Citations */
@@ -142,10 +153,14 @@ export interface components {
             /** Request Id */
             request_id: string;
             route: components["schemas"]["RouteName"];
+            /** Searched Partitions */
+            searched_partitions: components["schemas"]["Partition"][];
             /** Suggested Partitions */
             suggested_partitions: components["schemas"]["Partition"][];
             /** Warning */
             warning: string | null;
+            /** Web Citations */
+            web_citations: components["schemas"]["WebCitation"][];
         };
         /** ChunkPreviewItem */
         ChunkPreviewItem: {
@@ -196,6 +211,7 @@ export interface components {
             page_end: number | null;
             /** Page Start */
             page_start: number | null;
+            partition: components["schemas"]["Partition"];
             /** Section */
             section: string | null;
             /** Title */
@@ -301,6 +317,11 @@ export interface components {
         };
         /** HealthResponse */
         HealthResponse: {
+            /**
+             * Answer
+             * @enum {string}
+             */
+            answer: "configured" | "extractive" | "not_configured";
             indexes: components["schemas"]["IndexHealth"];
             /**
              * Metadata Database
@@ -319,6 +340,11 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "degraded";
+            /**
+             * Web Search
+             * @enum {string}
+             */
+            web_search: "configured" | "disabled" | "not_configured";
         };
         /** IndexHealth */
         IndexHealth: {
@@ -380,7 +406,7 @@ export interface components {
          * RouteName
          * @enum {string}
          */
-        RouteName: "finance" | "hr" | "tech" | "clarify";
+        RouteName: "finance" | "hr" | "tech" | "composite" | "clarify";
         /** UploadDocumentResponse */
         UploadDocumentResponse: {
             /** Chunk Count */
@@ -396,6 +422,15 @@ export interface components {
             status: components["schemas"]["DocumentStatus"];
             /** Warnings */
             warnings: string[];
+        };
+        /** WebCitation */
+        WebCitation: {
+            /** Domain */
+            domain: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
         };
     };
     responses: never;

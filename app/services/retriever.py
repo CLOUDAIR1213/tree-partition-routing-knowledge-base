@@ -5,12 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError, PartitionIsolationError
 from app.db.tables import ChunkCandidateTable, DocumentTable
 from app.models.enums import DocumentStatus, Partition
-from app.models.schemas import RetrievalHit
+from app.models.schemas import RetrievalGroup, RetrievalHit, RoutedSubquery
 
 
 class Retriever:
-    def __init__(self, index_registry) -> None:
+    def __init__(self, index_registry, min_score: float = 0) -> None:
         self.index_registry = index_registry
+        self.min_score = min_score
 
     async def search(
         self,
@@ -48,6 +49,8 @@ class Retriever:
 
         results: list[RetrievalHit] = []
         for chunk_id, score in ordered:
+            if score < self.min_score:
+                continue
             record = by_id.get(chunk_id)
             if record is None:
                 continue
@@ -77,6 +80,29 @@ class Retriever:
             )
         return results
 
+    async def search_groups(
+        self,
+        session: AsyncSession,
+        subqueries: list[RoutedSubquery],
+        limit: int,
+    ) -> list[RetrievalGroup]:
+        groups: list[RetrievalGroup] = []
+        for subquery in subqueries:
+            hits = await self.search(
+                session,
+                subquery.partition,
+                subquery.query,
+                limit,
+            )
+            groups.append(
+                RetrievalGroup(
+                    partition=subquery.partition,
+                    query=subquery.query,
+                    hits=hits,
+                )
+            )
+        return groups
+
     @staticmethod
     def _normalize_hit(hit: object) -> tuple[str, float] | None:
         if isinstance(hit, dict) and hit.get("id") is not None:
@@ -84,4 +110,3 @@ class Retriever:
         if isinstance(hit, (tuple, list)) and len(hit) >= 2:
             return str(hit[0]), float(hit[1])
         return None
-
