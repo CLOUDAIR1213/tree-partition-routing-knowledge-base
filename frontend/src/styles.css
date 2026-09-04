@@ -1671,7 +1671,8 @@ button:disabled {
   line-height: 1.7;
   max-width: 900px;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  /* Expanding reveals more text without turning raw parser newlines into new visual paragraphs. */
+  white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
