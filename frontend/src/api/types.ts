@@ -10,8 +10,15 @@ export type DocumentDetailResponse = components["schemas"]["DocumentDetailRespon
 export type DocumentListResponse = components["schemas"]["DocumentListResponse"];
 export type ChunkPreviewItem = components["schemas"]["ChunkPreviewItem"];
 export type ChunkPreviewResponse = components["schemas"]["ChunkPreviewResponse"];
+export type ParseQualityReport = components["schemas"]["ParseQualityReport"];
+export type PartitionSuggestion = components["schemas"]["PartitionSuggestion"];
 export type ReviewRequest = components["schemas"]["ReviewRequest"];
 export type ReviewResponse = components["schemas"]["ReviewResponse"];
+export type ChangeDocumentPartitionRequest = components["schemas"]["ChangeDocumentPartitionRequest"];
+export type ChangeDocumentPartitionResponse = components["schemas"]["ChangeDocumentPartitionResponse"];
+export type ReopenDocumentReviewRequest = components["schemas"]["ReopenDocumentReviewRequest"];
+export type ReopenDocumentReviewResponse = components["schemas"]["ReopenDocumentReviewResponse"];
+export type DeleteDocumentResponse = components["schemas"]["DeleteDocumentResponse"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
 export type Citation = components["schemas"]["Citation"];
 export type WebCitation = components["schemas"]["WebCitation"];
@@ -29,6 +36,8 @@ export interface UploadDocumentInput {
 
 export interface ListDocumentsParams {
   status?: DocumentStatus;
+  partition?: Partition;
+  q?: string;
   limit?: number;
   offset?: number;
 }

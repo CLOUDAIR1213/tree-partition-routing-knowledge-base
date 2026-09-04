@@ -1,3 +1,5 @@
+from time import perf_counter
+
 from anyio import to_thread
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError, PartitionIsolationError
 from app.db.tables import ChunkCandidateTable, DocumentTable
 from app.models.enums import DocumentStatus, Partition
-from app.models.schemas import RetrievalGroup, RetrievalHit, RoutedSubquery
+from app.models.schemas import (
+    PartitionTiming,
+    RetrievalGroup,
+    RetrievalHit,
+    RoutedSubquery,
+)
 
 
 class Retriever:
@@ -55,16 +62,10 @@ class Retriever:
             if record is None:
                 continue
             chunk, document = record
-            if (
-                document.confirmed_partition is not None
-                and document.confirmed_partition != partition.value
-            ):
-                raise PartitionIsolationError(partition.value)
-            if (
-                document.status != DocumentStatus.READY.value
-                or document.confirmed_partition != partition.value
-            ):
+            if document.status != DocumentStatus.READY.value:
                 continue
+            if document.confirmed_partition != partition.value:
+                raise PartitionIsolationError(partition.value)
             results.append(
                 RetrievalHit(
                     chunk_id=chunk.id,
@@ -102,6 +103,37 @@ class Retriever:
                 )
             )
         return groups
+
+    async def search_groups_with_timings(
+        self,
+        session: AsyncSession,
+        subqueries: list[RoutedSubquery],
+        limit: int,
+    ) -> tuple[list[RetrievalGroup], list[PartitionTiming]]:
+        groups: list[RetrievalGroup] = []
+        timings: list[PartitionTiming] = []
+        for subquery in subqueries:
+            started_at = perf_counter()
+            hits = await self.search(
+                session,
+                subquery.partition,
+                subquery.query,
+                limit,
+            )
+            timings.append(
+                PartitionTiming(
+                    partition=subquery.partition,
+                    elapsed_ms=round((perf_counter() - started_at) * 1000),
+                )
+            )
+            groups.append(
+                RetrievalGroup(
+                    partition=subquery.partition,
+                    query=subquery.query,
+                    hits=hits,
+                )
+            )
+        return groups, timings
 
     @staticmethod
     def _normalize_hit(hit: object) -> tuple[str, float] | None:

@@ -85,23 +85,23 @@ class SectionChunker:
     def _window_split(self, text: str) -> list[str]:
         units = list(TOKEN_PATTERN.finditer(text))
         step = self.max_tokens - self.overlap_tokens
-        chunks: list[str] = []
+        windows: list[tuple[int, int]] = []
         for start in range(0, len(units), step):
-            window = units[start : start + self.max_tokens]
-            if not window:
+            end = min(start + self.max_tokens, len(units))
+            if start >= end:
                 break
-            chunk = text[window[0].start() : window[-1].end()].strip()
-            if chunks and len(window) < self.min_tokens:
-                previous_start = max(0, start - (self.max_tokens - len(window)))
-                replacement = units[previous_start:]
-                chunks[-1] = text[replacement[0].start() : replacement[-1].end()].strip()
+            if windows and end - start < self.min_tokens and end <= windows[-1][1]:
                 break
-            chunks.append(chunk)
-        return chunks
+            windows.append((start, end))
+        return [text[units[start].start() : units[end - 1].end()].strip() for start, end in windows]
+
+    @staticmethod
+    def token_count(text: str) -> int:
+        return len(TOKEN_PATTERN.findall(text))
 
     @staticmethod
     def _token_count(text: str) -> int:
-        return len(TOKEN_PATTERN.findall(text))
+        return SectionChunker.token_count(text)
 
     @staticmethod
     def _embedding_text(

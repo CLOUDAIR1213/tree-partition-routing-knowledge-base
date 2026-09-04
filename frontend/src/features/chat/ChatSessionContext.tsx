@@ -31,6 +31,7 @@ export interface ChatMessage {
   suggestedPartitions?: Partition[];
   requestId?: string;
   warning?: string | null;
+  timing?: ChatResponse["timing"];
 }
 
 export interface Conversation {

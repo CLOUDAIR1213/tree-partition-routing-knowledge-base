@@ -34,6 +34,28 @@ def test_docx_parser_preserves_heading_hierarchy(tmp_path: Path):
     assert [section.section_path for section in sections] == ["Handbook", "Handbook > Approval"]
 
 
+def test_docx_parser_preserves_table_position_and_section(tmp_path: Path):
+    path = tmp_path / "table-order.docx"
+    document = Document()
+    document.add_heading("First", level=1)
+    document.add_paragraph("Before table")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Amount"
+    table.cell(0, 1).text = "600"
+    document.add_heading("Second", level=1)
+    document.add_paragraph("After table")
+    document.save(path)
+
+    result = StandardDocumentParser().parse_with_diagnostics(
+        path, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+    assert [section.section_path for section in result.sections] == ["First", "Second"]
+    assert result.sections[0].text == "Before table\n\nAmount | 600"
+    assert result.sections[1].text == "After table"
+    assert result.diagnostics.table_count == 1
+
+
 def test_pdf_parser_returns_page_metadata(tmp_path: Path):
     path = tmp_path / "policy.pdf"
     pdf = canvas.Canvas(str(path))
@@ -54,3 +76,15 @@ def test_long_english_window_preserves_word_boundaries():
     assert len(parts) > 1
     assert "word0 word1" in parts[0]
     assert "word0word1" not in parts[0]
+
+
+def test_small_trailing_window_never_discards_leading_tokens():
+    text = " ".join(f"word{index}" for index in range(710))
+    chunker = SectionChunker(550, 100, 700, 75)
+
+    parts = chunker._window_split(text)
+    found = {word for part in parts for word in part.split()}
+
+    assert parts[0].split()[0] == "word0"
+    assert parts[-1].split()[-1] == "word709"
+    assert found == {f"word{index}" for index in range(710)}

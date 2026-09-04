@@ -46,7 +46,7 @@ export function UploadPage() {
         partition,
         title: title.trim() || undefined,
       });
-      navigate(`/knowledge/review/${response.document_id}`);
+      navigate(`/knowledge/documents/${response.document_id}`);
     } catch (error) {
       if (error instanceof ApiError && error.body.code === "DUPLICATE_DOCUMENT") {
         const documentId = error.body.details?.document_id;
@@ -112,7 +112,7 @@ export function UploadPage() {
               id="document-title"
               maxLength={200}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="默认使用文件名"
+              placeholder="默认使用文件名（不含扩展名）"
               type="text"
               value={title}
             />

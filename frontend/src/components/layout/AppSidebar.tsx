@@ -1,6 +1,6 @@
-import { CirclePlus, Database, Ellipsis, Trash2, UserRound, X } from "lucide-react";
+import { BookOpenText, CirclePlus, Database, Ellipsis, Trash2, UserRound, X } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useChatSession } from "../../features/chat/ChatSessionContext";
 
 interface AppSidebarProps {
@@ -14,6 +14,7 @@ type PendingHistoryAction =
 
 export function AppSidebar({ open, onClose }: AppSidebarProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     conversations,
     activeConversation,
@@ -177,6 +178,19 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
             <p className="conversation-empty">提问后，会话将显示在这里</p>
           )}
         </section>
+
+        <button
+          aria-current={location.pathname.startsWith("/knowledge") ? "page" : undefined}
+          className="knowledge-nav-button"
+          onClick={() => {
+            navigate("/knowledge");
+            onClose();
+          }}
+          type="button"
+        >
+          <BookOpenText aria-hidden="true" size={17} strokeWidth={1.8} />
+          <span>知识库</span>
+        </button>
 
         <div className="sidebar-user">
           <span className="user-avatar">

@@ -57,6 +57,40 @@ npm run dev
 
 Vite 默认启用前端热模块更新；保存 `frontend/src/` 下的前端代码通常会直接更新浏览器。后端通过 `--reload` 监控 `app/` 下的 Python 文件，保存后会自动重启工作进程。`.env`、依赖、启动参数、`data/` 下运行数据和 txtai 索引不会自动重载，修改后请手动停止并重新启动后端。
 
+### 4.1 受信任内网演示
+
+内网演示使用单端口服务：FastAPI 托管 `frontend/dist`，页面通过同源 `/api/v1/*` 访问 API。先停止占用 `8000` 端口的本地开发后端，再在**以管理员身份运行的 PowerShell** 中执行：
+
+```powershell
+.\scripts\start_intranet.ps1 -AllowedSubnet "10.88.20.0/24"
+```
+
+部署前先确认本机 IPv4 地址和前缀长度，并将命令中的网段替换为当前可信局域网的实际 CIDR：
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.AddressState -eq "Preferred" -and $_.IPAddress -notlike "127.*" } |
+  Select-Object InterfaceAlias, IPAddress, PrefixLength
+```
+
+脚本会构建前端、启动 `0.0.0.0:8000`，并创建仅允许该私有网段访问的临时 Windows 防火墙规则；规则覆盖 Windows 的网络配置文件，但来源始终被限制到 `AllowedSubnet`。服务停止后规则自动移除。Windows 把企业局域网标记为“公用网络”不改变这条来源限制，也不代表服务被公开到互联网。客户端访问服务器的局域网 IPv4 地址与端口，例如 `http://<server-lan-ip>:8000`。
+
+部署成功需同时满足：启动窗口显示 Uvicorn 正在监听、服务器本机 `GET /api/v1/health` 返回 `200`，以及另一台位于 `AllowedSubnet` 的设备能打开首页。管理员授权取消、端口仍被占用或只完成本机访问，均不视为完成受限内网部署；普通启动仅能证明连通性，不能证明来源访问受到限制。
+
+这个模式没有登录、权限和限流。它只适用于受信任内网演示，不得配置端口转发、反向代理或公网 DNS 将其暴露到互联网。常规开发仍使用本节的双服务和热重载命令。
+
+### 4.2 普通内网验证启动
+
+仅在隔离的可信测试网中，且由操作者主动管理 Windows 防火墙时，可不使用管理员脚本直接启动：
+
+```powershell
+$env:SERVE_FRONTEND = "true"
+$env:APP_ENV = "trusted_intranet"
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+该方式不创建任何防火墙规则。如果防火墙被关闭，指定端口不会再受 Windows 来源限制，因此它只适合临时验证，不能作为常态内网部署方案。停止进程后环境变量和监听一并失效；恢复长期服务时应重新启用防火墙，并使用 `start_intranet.ps1` 或同等的指定 CIDR 入站规则。
+
 ## 5. 后端配置
 
 完整默认值见 `.env.example`，校验和派生规则见 `app/core/config.py`。
@@ -64,6 +98,7 @@ Vite 默认启用前端热模块更新；保存 `frontend/src/` 下的前端代�
 | 配置组 | 变量 | 用途 |
 | --- | --- | --- |
 | 应用 | `APP_HOST`、`APP_PORT`、`CORS_ORIGINS` | HTTP 监听和跨域 |
+| 内网页面 | `SERVE_FRONTEND`、`FRONTEND_DIST_DIR` | 开启 FastAPI 静态托管及构建产物目录；启动脚本临时设置前者 |
 | 数据 | `DATA_ROOT`、`RAW_ROOT`、`STAGING_ROOT`、`INDEX_ROOT`、`METADATA_DATABASE_URL` | 持久化位置 |
 | 上传 | `MAX_UPLOAD_SIZE_MB`、`ALLOWED_FILE_TYPES` | 服务端上传边界 |
 | Chunk | `CHUNK_TARGET_TOKENS`、`CHUNK_MIN_TOKENS`、`CHUNK_MAX_TOKENS`、`CHUNK_OVERLAP_TOKENS` | 切分参数 |
@@ -94,7 +129,7 @@ VITE_PROXY_TARGET=http://127.0.0.1:8000
 VITE_API_BASE_URL=
 ```
 
-本地开发保持 `VITE_API_BASE_URL` 为空，使用 Vite `/api` proxy。前后端分别部署时才设置完整 API Origin，并同步后端 CORS。修改环境变量后重启 Vite。
+本地开发保持 `VITE_API_BASE_URL` 为空，使用 Vite `/api` proxy。内网单端口模式也必须保持它为空，以便构建页面向当前服务器同源请求 `/api/v1/*`。前后端分别部署时才设置完整 API Origin，并同步后端 CORS。修改环境变量后重启 Vite。
 
 ## 7. 日常开发循环
 
@@ -145,6 +180,10 @@ OpenAPI 内存或生成检查见[API 契约](../contracts/api-conventions.md)。
 ### 第一次启动很慢
 
 txtai 可能加载或下载 Embedding 模型。使用本地已缓存的兼容模型可以避免大型下载。
+
+### 内网设备无法打开页面
+
+确认服务进程仍在运行，服务器与客户端位于预期局域网，并访问 `http://<server-lan-ip>:8000` 而不是 `127.0.0.1`。使用受限启动脚本时，确认 UAC 已授予管理员权限、网段与 `AllowedSubnet` 一致且脚本没有提示端口占用；当前网络即使显示为“公用”，受限入站规则仍可工作。使用普通启动时，先检查操作者配置的 Windows 防火墙策略；如网络切换，请停止服务后按新网段重新运行受限脚本；不要放宽为任意来源或配置公网端口转发。
 
 ## 10. 运行数据边界
 

@@ -33,15 +33,33 @@ class Database:
 
     async def mark_interrupted_indexing_failed(self) -> None:
         async with self.session_factory() as session:
-            await session.execute(
-                update(DocumentTable)
-                .where(DocumentTable.status == DocumentStatus.INDEXING.value)
-                .values(
-                    status=DocumentStatus.FAILED.value,
-                    error_code="INDEX_RECOVERY_REQUIRED",
-                    error_message="应用启动时发现未完成的索引写入，需要人工重试",
-                )
+            interrupted = (
+                (
+                    DocumentStatus.INDEXING,
+                    "INDEX_RECOVERY_REQUIRED",
+                    "应用启动时发现未完成的索引写入，需要人工重试",
+                ),
+                (
+                    DocumentStatus.REINDEXING,
+                    "REINDEX_RECOVERY_REQUIRED",
+                    "应用启动时发现未完成的索引调整，需要人工检查",
+                ),
+                (
+                    DocumentStatus.DELETING,
+                    "DELETE_RECOVERY_REQUIRED",
+                    "应用启动时发现未完成的文档删除，可重试删除",
+                ),
             )
+            for current_status, error_code, error_message in interrupted:
+                await session.execute(
+                    update(DocumentTable)
+                    .where(DocumentTable.status == current_status.value)
+                    .values(
+                        status=DocumentStatus.FAILED.value,
+                        error_code=error_code,
+                        error_message=error_message,
+                    )
+                )
             await session.commit()
 
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -50,4 +68,3 @@ class Database:
 
     async def close(self) -> None:
         await self.engine.dispose()
-

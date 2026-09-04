@@ -25,11 +25,16 @@ def test_upload_preview_and_approve_into_confirmed_partition(client, fake_regist
     assert detail.status_code == 200
     assert "stored_path" not in detail.json()
     assert "checksum_sha256" not in detail.json()
+    assert detail.json()["title"] == "Demo policy"
+    assert detail.json()["parse_quality"] == payload["parse_quality"]
 
     preview = client.get(f"/api/v1/documents/{document_id}/preview?limit=1&offset=0")
     assert preview.status_code == 200
     assert preview.json()["total"] == payload["chunk_count"]
     assert "embedding_text" not in preview.json()["items"][0]
+    assert preview.json()["items"][0]["text"] == "Demo amount is 600 yuan."
+    assert preview.json()["items"][0]["title"] == "Demo policy"
+    assert preview.json()["parse_quality"] == payload["parse_quality"]
     assert fake_registry.upsert_calls == []
 
     review = client.post(
@@ -48,6 +53,30 @@ def test_upload_preview_and_approve_into_confirmed_partition(client, fake_regist
     assert fake_registry.upsert_calls == ["tech"]
     assert fake_registry.rows["finance"] == {}
     assert fake_registry.rows["hr"] == {}
+
+
+def test_upload_without_title_uses_filename_stem_not_first_section_heading(client):
+    upload = client.post(
+        "/api/v1/documents",
+        files={
+            "file": (
+                "company-security-handbook.md",
+                b"# Document control information\n\nSecurity policy content.",
+                "text/markdown",
+            )
+        },
+        data={"partition": "tech"},
+    )
+    assert upload.status_code == 201, upload.text
+
+    document_id = upload.json()["document_id"]
+    detail = client.get(f"/api/v1/documents/{document_id}")
+    preview = client.get(f"/api/v1/documents/{document_id}/preview")
+
+    assert detail.status_code == 200
+    assert detail.json()["title"] == "company-security-handbook"
+    assert preview.status_code == 200
+    assert preview.json()["items"][0]["title"] == "company-security-handbook"
 
 
 def test_reject_does_not_touch_any_index(client, fake_registry):
@@ -126,6 +155,57 @@ def test_list_pagination_and_health(client):
     assert health.json()["web_search"] == "disabled"
 
 
+def test_list_filters_by_effective_partition_and_query(client):
+    finance_id = upload_markdown(
+        client,
+        b"# Travel handbook\n\nExpense submission rules.",
+        "travel-handbook.md",
+    ).json()["document_id"]
+    tech_id = upload_markdown(
+        client,
+        b"# VPN handbook\n\nCertificate troubleshooting.",
+        "vpn-handbook.md",
+    ).json()["document_id"]
+    review = client.post(
+        f"/api/v1/documents/{tech_id}/review",
+        json={
+            "action": "approve",
+            "confirmed_partition": "tech",
+            "reviewer_name": None,
+            "note": None,
+        },
+    )
+    assert review.status_code == 200
+
+    by_query = client.get("/api/v1/documents?q=vPn-HaNdBoOk")
+    assert by_query.status_code == 200
+    assert [item["document_id"] for item in by_query.json()["items"]] == [tech_id]
+
+    by_effective_partition = client.get("/api/v1/documents?partition=tech")
+    assert by_effective_partition.status_code == 200
+    assert [item["document_id"] for item in by_effective_partition.json()["items"]] == [
+        tech_id
+    ]
+
+    pending_finance = client.get(
+        "/api/v1/documents?partition=finance&status=pending_review"
+    )
+    assert pending_finance.status_code == 200
+    assert [
+        item["document_id"] for item in pending_finance.json()["items"]
+    ] == [finance_id]
+
+
+def test_list_rejects_invalid_partition_and_long_query(client):
+    invalid_partition = client.get("/api/v1/documents?partition=legal")
+    assert invalid_partition.status_code == 422
+    assert invalid_partition.json()["code"] == "INVALID_PARTITION"
+
+    long_query = client.get(f"/api/v1/documents?q={'x' * 201}")
+    assert long_query.status_code == 422
+    assert long_query.json()["code"] == "VALIDATION_ERROR"
+
+
 def test_framework_404_uses_error_contract(client):
     response = client.get("/api/v1/not-a-route")
     assert response.status_code == 404
@@ -164,6 +244,34 @@ def test_txt_pdf_docx_and_markdown_uploads(client):
         assert response.status_code == 201, response.text
         assert response.json()["status"] == "pending_review"
         assert response.json()["chunk_count"] >= 1
+        assert response.json()["parse_quality"]["source_format"] in {
+            "text",
+            "markdown",
+            "docx",
+            "pdf",
+        }
+
+
+def test_upload_returns_quality_and_non_authoritative_partition_suggestion(client):
+    response = upload_markdown(
+        client,
+        (
+            "# \u5dee\u65c5\u62a5\u9500\n\n"
+            "\u5dee\u65c5\u8d39\u7528\u62a5\u9500\u5236\u5ea6\u3002\n\n"
+            "## \u53d1\u7968\u6750\u6599\n\n"
+            "\u62a5\u9500\u7533\u8bf7\u9700\u9644\u53d1\u7968\u3001\u5dee\u65c5\u5ba1\u6279\u5355\u548c\u8d39\u7528\u660e\u7ec6\u3002"
+        ).encode(),
+        "travel.md",
+    )
+
+    assert response.status_code == 201, response.text
+    quality = response.json()["parse_quality"]
+    assert quality["section_count"] == 2
+    assert quality["heading_recognition_rate"] == 1
+    assert quality["partition_suggestion"]["partition"] == "finance"
+    assert quality["partition_suggestion"]["confidence"] > 0
+    assert response.json()["selected_partition"] == "finance"
+    assert response.json()["confirmed_partition"] is None
 
 
 def test_content_and_extension_mismatch_is_rejected(client):
@@ -197,3 +305,184 @@ def test_index_failure_compensates_and_marks_document_failed(client, fake_regist
     detail = client.get(f"/api/v1/documents/{document_id}")
     assert detail.json()["status"] == "failed"
     assert detail.json()["error_code"] == "INDEX_WRITE_FAILED"
+
+
+def test_delete_pending_document_removes_files_chunks_and_metadata(client, fake_registry):
+    document_id = upload_markdown(
+        client,
+        b"# Disposable\n\nPending content to remove.",
+        "disposable.md",
+    ).json()["document_id"]
+    settings = client.app.state.settings
+    assert (settings.raw_root / document_id).exists()
+    assert (settings.staging_root / document_id).exists()
+
+    response = client.delete(f"/api/v1/documents/{document_id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted"] is True
+    assert response.json()["removed_chunk_count"] == 1
+    assert fake_registry.delete_calls == ["finance", "hr", "tech"]
+    assert not (settings.raw_root / document_id).exists()
+    assert not (settings.staging_root / document_id).exists()
+    assert client.get(f"/api/v1/documents/{document_id}").status_code == 404
+    assert client.get(f"/api/v1/documents/{document_id}/preview").status_code == 404
+
+
+def test_delete_ready_document_removes_indexed_chunks_from_every_partition(
+    client,
+    fake_registry,
+):
+    document_id = upload_markdown(
+        client,
+        b"# Indexed delete\n\nRemove indexed content too.",
+        "indexed-delete.md",
+    ).json()["document_id"]
+    assert client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "tech"},
+    ).status_code == 200
+    assert fake_registry.rows["tech"]
+
+    response = client.delete(f"/api/v1/documents/{document_id}")
+
+    assert response.status_code == 200, response.text
+    assert all(not rows for rows in fake_registry.rows.values())
+    assert client.get(f"/api/v1/documents/{document_id}").status_code == 404
+
+
+def test_change_partition_moves_every_chunk_and_updates_review_fields(
+    client,
+    fake_registry,
+):
+    document_id = upload_markdown(
+        client,
+        b"# Reassign\n\nMove this indexed content.",
+        "reassign.md",
+    ).json()["document_id"]
+    approved = client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={
+            "action": "approve",
+            "confirmed_partition": "finance",
+            "reviewer_name": "first-reviewer",
+            "note": "Initial partition",
+        },
+    )
+    assert approved.status_code == 200
+    chunk_ids = set(fake_registry.rows["finance"])
+
+    response = client.post(
+        f"/api/v1/documents/{document_id}/partition",
+        json={
+            "confirmed_partition": "tech",
+            "reviewer_name": "partition-reviewer",
+            "note": "Technical ownership confirmed",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["previous_partition"] == "finance"
+    assert response.json()["confirmed_partition"] == "tech"
+    assert response.json()["status"] == "ready"
+    assert set(fake_registry.rows["tech"]) == chunk_ids
+    assert fake_registry.rows["finance"] == {}
+    assert fake_registry.rows["hr"] == {}
+    detail = client.get(f"/api/v1/documents/{document_id}").json()
+    assert detail["confirmed_partition"] == "tech"
+    assert detail["review_note"] == "Technical ownership confirmed"
+
+
+def test_change_partition_failure_restores_original_ready_index(client, fake_registry):
+    document_id = upload_markdown(
+        client,
+        b"# Restore\n\nKeep the original partition on failure.",
+        "restore.md",
+    ).json()["document_id"]
+    assert client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "finance"},
+    ).status_code == 200
+    original_ids = set(fake_registry.rows["finance"])
+    fake_registry.fail_next_upsert = True
+
+    response = client.post(
+        f"/api/v1/documents/{document_id}/partition",
+        json={"confirmed_partition": "hr"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "PARTITION_CHANGE_FAILED"
+    assert response.json()["details"]["compensation"] == "compensation_succeeded"
+    assert set(fake_registry.rows["finance"]) == original_ids
+    assert fake_registry.rows["hr"] == {}
+    detail = client.get(f"/api/v1/documents/{document_id}").json()
+    assert detail["status"] == "ready"
+    assert detail["confirmed_partition"] == "finance"
+
+
+def test_reopen_review_removes_indexes_and_allows_new_approval(client, fake_registry):
+    document_id = upload_markdown(
+        client,
+        b"# Review again\n\nRecheck this document.",
+        "review-again.md",
+    ).json()["document_id"]
+    assert client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "finance"},
+    ).status_code == 200
+
+    reopened = client.post(
+        f"/api/v1/documents/{document_id}/reopen-review",
+        json={"reviewer_name": None, "note": "Needs another review"},
+    )
+
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["previous_partition"] == "finance"
+    assert reopened.json()["confirmed_partition"] is None
+    assert reopened.json()["status"] == "pending_review"
+    assert all(not rows for rows in fake_registry.rows.values())
+    detail = client.get(f"/api/v1/documents/{document_id}").json()
+    assert detail["confirmed_partition"] is None
+    assert detail["review_note"] == "Needs another review"
+
+    approved = client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "hr"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["confirmed_partition"] == "hr"
+    assert fake_registry.rows["finance"] == {}
+    assert fake_registry.rows["hr"]
+
+
+def test_management_actions_reject_invalid_states_and_unchanged_partition(client):
+    document_id = upload_markdown(
+        client,
+        b"# State rules\n\nManagement state validation.",
+        "state-rules.md",
+    ).json()["document_id"]
+
+    pending_change = client.post(
+        f"/api/v1/documents/{document_id}/partition",
+        json={"confirmed_partition": "tech"},
+    )
+    pending_reopen = client.post(
+        f"/api/v1/documents/{document_id}/reopen-review",
+        json={},
+    )
+    assert pending_change.status_code == 409
+    assert pending_change.json()["code"] == "INVALID_DOCUMENT_STATE"
+    assert pending_reopen.status_code == 409
+    assert pending_reopen.json()["code"] == "INVALID_DOCUMENT_STATE"
+
+    assert client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "finance"},
+    ).status_code == 200
+    unchanged = client.post(
+        f"/api/v1/documents/{document_id}/partition",
+        json={"confirmed_partition": "finance"},
+    )
+    assert unchanged.status_code == 422
+    assert unchanged.json()["code"] == "PARTITION_UNCHANGED"

@@ -60,6 +60,8 @@ class IndexRegistry:
 
     def delete_and_save(self, partition: Partition, chunk_ids: list[str]) -> None:
         with self._locks[partition]:
+            if not chunk_ids:
+                return
             index = self.get(partition)
             if not self._populated[partition]:
                 return
@@ -67,12 +69,26 @@ class IndexRegistry:
             index.save(str(self.root / partition.value))
 
     def verify(self, partition: Partition, chunk_ids: list[str]) -> bool:
-        if not chunk_ids:
-            return True
-        index = self.get(partition)
-        wanted = chunk_ids[0].replace("'", "''")
+        with self._locks[partition]:
+            if not chunk_ids:
+                return True
+            index = self.get(partition)
+            return all(self._contains(index, chunk_id) for chunk_id in chunk_ids)
+
+    def verify_absent(self, partition: Partition, chunk_ids: list[str]) -> bool:
+        with self._locks[partition]:
+            if not chunk_ids:
+                return True
+            index = self.get(partition)
+            if not self._populated[partition]:
+                return True
+            return not any(self._contains(index, chunk_id) for chunk_id in chunk_ids)
+
+    @staticmethod
+    def _contains(index, chunk_id: str) -> bool:
+        wanted = chunk_id.replace("'", "''")
         rows = index.search(f"select id from txtai where id = '{wanted}'")
-        return any(str(row.get("id")) == chunk_ids[0] for row in rows)
+        return any(str(row.get("id")) == chunk_id for row in rows)
 
     def search(self, partition: Partition, query: str, limit: int = 5) -> list[dict]:
         if not self._populated[partition]:

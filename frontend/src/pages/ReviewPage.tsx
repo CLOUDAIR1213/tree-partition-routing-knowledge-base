@@ -1,14 +1,16 @@
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Check,
   FileText,
   Layers3,
   LoaderCircle,
   RotateCcw,
+  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, ApiTimeoutError, documentsApi } from "../api/client";
 import type {
   ChunkPreviewResponse,
@@ -17,6 +19,7 @@ import type {
 } from "../api/types";
 import { ChunkPreviewList } from "../components/ChunkPreviewList";
 import { DocumentStatusBadge } from "../components/DocumentStatusBadge";
+import { ParseQualitySummary } from "../components/ParseQualitySummary";
 import { PartitionSelector } from "../components/PartitionSelector";
 import { formatFileSize } from "../components/UploadDropzone";
 import { partitionLabels } from "../constants/partitions";
@@ -46,6 +49,14 @@ function reviewErrorMessage(error: unknown) {
       return "批准入库前必须选择最终分区。";
     case "INDEX_WRITE_FAILED":
       return `索引写入失败，文档未完成入库（请求 ID：${error.body.request_id}）`;
+    case "PARTITION_UNCHANGED":
+      return "请选择与当前不同的分区。";
+    case "PARTITION_CHANGE_FAILED":
+      return `更改分区失败，系统已尝试恢复原索引（请求 ID：${error.body.request_id}）`;
+    case "REOPEN_REVIEW_FAILED":
+      return `退回重新审核失败，系统已尝试恢复原索引（请求 ID：${error.body.request_id}）`;
+    case "DOCUMENT_DELETE_FAILED":
+      return `文档未完成全部删除，可重试（请求 ID：${error.body.request_id}）`;
     default:
       return `${error.body.message}（请求 ID：${error.body.request_id}）`;
   }
@@ -53,31 +64,50 @@ function reviewErrorMessage(error: unknown) {
 
 export function ReviewPage() {
   const { documentId = "" } = useParams();
+  const navigate = useNavigate();
   const [document, setDocument] = useState<DocumentDetailResponse | null>(null);
   const [preview, setPreview] = useState<ChunkPreviewResponse | null>(null);
   const [confirmedPartition, setConfirmedPartition] = useState<Partition | null>(null);
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
-  const [action, setAction] = useState<"approve" | "reject" | null>(null);
+  const [action, setAction] = useState<
+    "approve" | "reject" | "change_partition" | "reopen" | "delete" | null
+  >(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [managementDialog, setManagementDialog] = useState<
+    "change_partition" | "reopen" | "delete" | null
+  >(null);
+  const [managementPartition, setManagementPartition] = useState<Partition | null>(null);
+  const [managementNote, setManagementNote] = useState("");
+  const [managementError, setManagementError] = useState<string | null>(null);
 
   const loadDocument = useCallback(async () => {
     if (!documentId) return;
     setLoading(true);
     setPageError(null);
     try {
-      const [detail, chunks] = await Promise.all([
-        documentsApi.get(documentId),
-        documentsApi.preview(documentId, { limit: PAGE_SIZE, offset: 0 }),
-      ]);
+      const detail = await documentsApi.get(documentId);
       setDocument(detail);
-      setPreview(chunks);
-      setConfirmedPartition(detail.confirmed_partition ?? detail.selected_partition);
+      setConfirmedPartition(detail.confirmed_partition ?? null);
       setNote(detail.review_note ?? "");
+      setPreview(null);
+      setPreviewError(null);
+      if (detail.chunk_count > 0) {
+        try {
+          const chunks = await documentsApi.preview(documentId, {
+            limit: PAGE_SIZE,
+            offset: 0,
+          });
+          setPreview(chunks);
+        } catch (error) {
+          setPreviewError(reviewErrorMessage(error));
+        }
+      }
     } catch (error) {
       setPageError(reviewErrorMessage(error));
     } finally {
@@ -92,6 +122,7 @@ export function ReviewPage() {
   async function changePage(page: number) {
     if (!documentId) return;
     setPreviewLoading(true);
+    setPreviewError(null);
     try {
       const chunks = await documentsApi.preview(documentId, {
         limit: PAGE_SIZE,
@@ -99,7 +130,7 @@ export function ReviewPage() {
       });
       setPreview(chunks);
     } catch (error) {
-      setReviewError(reviewErrorMessage(error));
+      setPreviewError(reviewErrorMessage(error));
     } finally {
       setPreviewLoading(false);
     }
@@ -169,6 +200,67 @@ export function ReviewPage() {
     }
   }
 
+  function openManagementDialog(kind: "change_partition" | "reopen" | "delete") {
+    setManagementError(null);
+    setManagementNote("");
+    setManagementPartition(document?.confirmed_partition ?? null);
+    setManagementDialog(kind);
+  }
+
+  async function changePartition() {
+    if (!document || !managementPartition) return;
+    if (managementPartition === document.confirmed_partition) {
+      setManagementError("请选择与当前不同的分区。");
+      return;
+    }
+    setAction("change_partition");
+    setManagementError(null);
+    try {
+      await documentsApi.changePartition(document.document_id, {
+        confirmed_partition: managementPartition,
+        reviewer_name: null,
+        note: managementNote.trim() || null,
+      });
+      setManagementDialog(null);
+      await loadDocument();
+    } catch (error) {
+      setManagementError(reviewErrorMessage(error));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function reopenReview() {
+    if (!document) return;
+    setAction("reopen");
+    setManagementError(null);
+    try {
+      await documentsApi.reopenReview(document.document_id, {
+        reviewer_name: null,
+        note: managementNote.trim() || null,
+      });
+      setManagementDialog(null);
+      await loadDocument();
+    } catch (error) {
+      setManagementError(reviewErrorMessage(error));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function deleteDocument() {
+    if (!document) return;
+    setAction("delete");
+    setManagementError(null);
+    try {
+      await documentsApi.delete(document.document_id);
+      navigate("/knowledge", { replace: true });
+    } catch (error) {
+      setManagementError(reviewErrorMessage(error));
+      setAction(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="standard-page centered-page-state" role="status">
@@ -178,18 +270,18 @@ export function ReviewPage() {
     );
   }
 
-  if (pageError || !document || !preview) {
+  if (pageError || !document) {
     return (
       <div className="standard-page review-error-state">
-        <h1>无法打开审核页面</h1>
-        <p>{pageError || "文档预览尚未就绪。"}</p>
+        <h1>无法打开文档</h1>
+        <p>{pageError || "文档不存在或暂时不可读取。"}</p>
         <div>
           <button className="secondary-button" onClick={() => void loadDocument()} type="button">
             <RotateCcw aria-hidden="true" size={16} />
             重新读取
           </button>
-          <Link className="secondary-button" to="/knowledge/upload">
-            返回上传
+          <Link className="secondary-button" to="/knowledge">
+            返回知识库
           </Link>
         </div>
       </div>
@@ -197,24 +289,34 @@ export function ReviewPage() {
   }
 
   const reviewable = document.status === "pending_review";
+  const previewReady = Boolean(preview) && !previewLoading && !previewError;
+  const ready = document.status === "ready" && Boolean(document.confirmed_partition);
+  const deletable = ["pending_review", "ready", "rejected", "failed"].includes(
+    document.status,
+  );
 
   return (
     <div className="standard-page review-page">
       <div className="review-title-row">
-        <Link aria-label="返回上传" className="icon-button" to="/knowledge/upload">
+        <Link aria-label="返回知识库" className="icon-button" to="/knowledge">
           <ArrowLeft aria-hidden="true" size={19} />
         </Link>
         <div>
-          <span>文档审核</span>
+          <span>文档详情</span>
           <h1>{document.title || document.original_filename}</h1>
         </div>
-        <DocumentStatusBadge status={document.status} />
+        <div className="review-title-status">
+          <DocumentStatusBadge status={document.status} />
+        </div>
       </div>
 
       <section className="document-summary" aria-label="文档信息">
-        <div>
+        <div className="document-summary-primary">
           <FileText aria-hidden="true" size={17} />
           <span><small>文件</small><strong>{document.original_filename}</strong></span>
+        </div>
+        <div>
+          <span><small>初选分区</small><strong>{partitionLabels[document.selected_partition]}</strong></span>
         </div>
         <div>
           <Layers3 aria-hidden="true" size={17} />
@@ -228,13 +330,31 @@ export function ReviewPage() {
         </div>
       </section>
 
+      <ParseQualitySummary quality={document.parse_quality} />
+
       {document.error_message && (
         <div className="page-alert" role="alert">
           {document.error_message} {document.error_code && `（${document.error_code}）`}
         </div>
       )}
 
-      <ChunkPreviewList data={preview} loading={previewLoading} onPageChange={changePage} />
+      {preview ? (
+        <ChunkPreviewList data={preview} loading={previewLoading} onPageChange={changePage} />
+      ) : (
+        <section className="chunk-section chunk-unavailable" aria-labelledby="chunk-heading">
+          <div className="section-heading-row">
+            <div>
+              <h2 id="chunk-heading">Chunk 预览</h2>
+              <p>{previewError || "文档正在处理，暂未生成可预览的 Chunk。"}</p>
+            </div>
+            {document.chunk_count > 0 && (
+              <button className="secondary-button" onClick={() => void loadDocument()} type="button">
+                重新读取
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="review-section" aria-labelledby="review-heading">
         <div className="section-heading-row">
@@ -246,6 +366,7 @@ export function ReviewPage() {
 
         <div className="partition-comparison">
           <span>上传选择 <strong>{partitionLabels[document.selected_partition]}</strong></span>
+          <span>内容建议 <strong>{document.parse_quality?.partition_suggestion.partition ? partitionLabels[document.parse_quality.partition_suggestion.partition] : "未形成唯一建议"}</strong></span>
           <span>最终确认 <strong>{confirmedPartition ? partitionLabels[confirmedPartition] : "未选择"}</strong></span>
         </div>
 
@@ -271,6 +392,11 @@ export function ReviewPage() {
         </div>
 
         {reviewError && <div className="page-alert review-action-error" role="alert">{reviewError}</div>}
+        {reviewable && !previewReady && (
+          <div className="page-alert review-action-error" role="alert">
+            Chunk 完整预览不可用，无法批准入库。请重新读取或检查解析状态。
+          </div>
+        )}
 
         <div className="review-actions">
           {reviewable ? (
@@ -286,7 +412,7 @@ export function ReviewPage() {
               </button>
               <button
                 className="review-primary-button"
-                disabled={!confirmedPartition || Boolean(action)}
+                disabled={!confirmedPartition || !previewReady || Boolean(action)}
                 onClick={() => void approve()}
                 type="button"
               >
@@ -304,6 +430,52 @@ export function ReviewPage() {
             </Link>
           ) : (
             <Link className="secondary-button" to="/knowledge/upload">继续上传文档</Link>
+          )}
+        </div>
+      </section>
+
+      <section className="document-management-section" aria-labelledby="management-heading">
+        <div className="section-heading-row">
+          <div>
+            <h2 id="management-heading">文档管理</h2>
+          </div>
+        </div>
+        {managementError && (
+          <div className="page-alert review-action-error" role="alert">{managementError}</div>
+        )}
+        <div className="management-actions">
+          {ready && (
+            <>
+              <button
+                className="secondary-button"
+                disabled={Boolean(action)}
+                onClick={() => openManagementDialog("change_partition")}
+                type="button"
+              >
+                <ArrowRightLeft aria-hidden="true" size={16} />
+                更改分区
+              </button>
+              <button
+                className="secondary-button"
+                disabled={Boolean(action)}
+                onClick={() => openManagementDialog("reopen")}
+                type="button"
+              >
+                <RotateCcw aria-hidden="true" size={16} />
+                重新审核
+              </button>
+            </>
+          )}
+          {deletable && (
+            <button
+              className="reject-button"
+              disabled={Boolean(action)}
+              onClick={() => openManagementDialog("delete")}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" size={16} />
+              删除文档
+            </button>
           )}
         </div>
       </section>
@@ -329,6 +501,103 @@ export function ReviewPage() {
               <button className="reject-confirm-button" disabled={!rejectReason.trim() || action === "reject"} onClick={() => void reject()} type="button">
                 {action === "reject" ? "正在拒绝" : "确认拒绝"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {managementDialog && (
+        <div className="dialog-backdrop" role="presentation">
+          <div
+            aria-labelledby="management-dialog-title"
+            aria-modal="true"
+            className="confirm-dialog management-dialog"
+            role="dialog"
+          >
+            <h2 id="management-dialog-title">
+              {managementDialog === "change_partition"
+                ? "更改文档分区"
+                : managementDialog === "reopen"
+                  ? "退回重新审核？"
+                  : "删除这份文档？"}
+            </h2>
+            <p>
+              {managementDialog === "change_partition"
+                ? "文档 Chunk 将从旧分区移除并写入新分区。"
+                : managementDialog === "reopen"
+                  ? "文档将从索引移除并回到待审核状态。"
+                  : "原文件、解析快照、Chunk 和索引数据都会被删除，且无法撤销。"}
+            </p>
+
+            {managementDialog === "change_partition" && (
+              <PartitionSelector
+                disabled={action === "change_partition"}
+                layout="segmented"
+                legend="选择新的知识分区"
+                onChange={setManagementPartition}
+                value={managementPartition}
+              />
+            )}
+
+            {managementDialog !== "delete" && (
+              <div className="form-field management-note-field">
+                <label htmlFor="management-note">操作备注 <span>选填</span></label>
+                <textarea
+                  disabled={Boolean(action)}
+                  id="management-note"
+                  maxLength={500}
+                  onChange={(event) => setManagementNote(event.target.value)}
+                  rows={2}
+                  value={managementNote}
+                />
+                <small>{managementNote.length}/500</small>
+              </div>
+            )}
+
+            {managementError && (
+              <div className="page-alert review-action-error" role="alert">{managementError}</div>
+            )}
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                disabled={Boolean(action)}
+                onClick={() => setManagementDialog(null)}
+                type="button"
+              >
+                取消
+              </button>
+              {managementDialog === "change_partition" ? (
+                <button
+                  className="review-primary-button"
+                  disabled={
+                    !managementPartition ||
+                    managementPartition === document.confirmed_partition ||
+                    action === "change_partition"
+                  }
+                  onClick={() => void changePartition()}
+                  type="button"
+                >
+                  {action === "change_partition" ? "正在调整" : "确认更改"}
+                </button>
+              ) : managementDialog === "reopen" ? (
+                <button
+                  className="review-primary-button"
+                  disabled={action === "reopen"}
+                  onClick={() => void reopenReview()}
+                  type="button"
+                >
+                  {action === "reopen" ? "正在退回" : "确认重新审核"}
+                </button>
+              ) : (
+                <button
+                  className="reject-confirm-button"
+                  disabled={action === "delete"}
+                  onClick={() => void deleteDocument()}
+                  type="button"
+                >
+                  {action === "delete" ? "正在删除" : "确认删除"}
+                </button>
+              )}
             </div>
           </div>
         </div>

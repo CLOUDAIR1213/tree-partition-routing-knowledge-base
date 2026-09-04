@@ -23,6 +23,11 @@ const successResponse = {
   suggested_partitions: [],
   request_id: "req-success",
   warning: null,
+  timing: {
+    retrieval: [{ partition: "finance", elapsed_ms: 14 }],
+    router_llm_ms: 17,
+    answer_llm_ms: 42,
+  },
 };
 
 describe("API client", () => {
@@ -40,6 +45,7 @@ describe("API client", () => {
     });
 
     expect(response.request_id).toBe("req-success");
+    expect(response.timing).toEqual(successResponse.timing);
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/v1/chat",
       expect.objectContaining({
@@ -101,6 +107,11 @@ describe("API client", () => {
           searched_partitions: [],
           citations: [],
           suggested_partitions: ["finance", "hr", "tech"],
+          timing: {
+            retrieval: [],
+            router_llm_ms: 17,
+            answer_llm_ms: null,
+          },
         }),
         { status: 200 },
       ),
@@ -186,5 +197,76 @@ describe("API client", () => {
         }),
       }),
     );
+  });
+
+  it("encodes knowledge-library filters in the documents query", async () => {
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [],
+          total: 0,
+          limit: 20,
+          offset: 0,
+          request_id: "req-list",
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await documentsApi.list({
+      q: "VPN guide",
+      status: "ready",
+      partition: "tech",
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(String(fetchSpy.mock.calls[0][0])).toBe(
+      "/api/v1/documents?status=ready&partition=tech&q=VPN+guide&limit=20&offset=0",
+    );
+  });
+
+  it("uses document-management paths and request fields", async () => {
+    const documentId = "doc_0123456789abcdef01234567";
+    const fetchSpy = vi.spyOn(window, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ request_id: "req-management" }), { status: 200 }),
+    );
+
+    await documentsApi.changePartition(documentId, {
+      confirmed_partition: "tech",
+      reviewer_name: null,
+      note: "Move to technical knowledge",
+    });
+    await documentsApi.reopenReview(documentId, {
+      reviewer_name: null,
+      note: "Review again",
+    });
+    await documentsApi.delete(documentId);
+
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      `/api/v1/documents/${documentId}/partition`,
+    );
+    expect(fetchSpy.mock.calls[0][1]).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        confirmed_partition: "tech",
+        reviewer_name: null,
+        note: "Move to technical knowledge",
+      }),
+    }));
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      `/api/v1/documents/${documentId}/reopen-review`,
+    );
+    expect(fetchSpy.mock.calls[1][1]).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        reviewer_name: null,
+        note: "Review again",
+      }),
+    }));
+    expect(fetchSpy.mock.calls[2][0]).toBe(`/api/v1/documents/${documentId}`);
+    expect(fetchSpy.mock.calls[2][1]).toEqual(expect.objectContaining({
+      method: "DELETE",
+    }));
   });
 });

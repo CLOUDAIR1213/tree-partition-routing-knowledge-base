@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   ChatSessionProvider,
+  type Conversation,
   useChatSession,
 } from "./ChatSessionContext";
 import { CHAT_SESSION_STORAGE_KEY } from "./chatSessionStorage";
@@ -53,7 +54,7 @@ function SessionHarness() {
   );
 }
 
-function storedConversation(id: string, title: string) {
+function storedConversation(id: string, title: string): Conversation {
   return {
     id,
     title,
@@ -102,6 +103,38 @@ describe("ChatSessionProvider", () => {
 
   it("falls back to an empty conversation for invalid stored data", () => {
     window.localStorage.setItem(CHAT_SESSION_STORAGE_KEY, "{invalid-json");
+
+    render(
+      <ChatSessionProvider>
+        <SessionHarness />
+      </ChatSessionProvider>,
+    );
+
+    expect(screen.getByText("新对话")).toBeInTheDocument();
+  });
+
+  it("falls back to an empty conversation for invalid stored timing", () => {
+    storeSession(
+      [
+        {
+          id: "conversation-invalid-timing",
+          title: "损坏计时",
+          messages: [
+            {
+              id: "message-invalid-timing",
+              role: "assistant",
+              content: "不应恢复",
+              timing: {
+                retrieval: [{ partition: "tech", elapsed_ms: -1 }],
+                router_llm_ms: null,
+                answer_llm_ms: null,
+              },
+            },
+          ],
+        },
+      ],
+      "conversation-invalid-timing",
+    );
 
     render(
       <ChatSessionProvider>

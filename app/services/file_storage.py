@@ -90,6 +90,16 @@ class FileStorage:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def read_parse_snapshot(self, document_id: str) -> dict | None:
+        target_dir = (self.staging_root / document_id).resolve()
+        if self.staging_root not in target_dir.parents:
+            raise AppError("VALIDATION_ERROR", "非法暂存路径", 422)
+        snapshot_path = target_dir / "parse.json"
+        if not snapshot_path.exists():
+            return None
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else None
+
     def remove_document(self, document_id: str) -> None:
         for root in (self.raw_root, self.staging_root):
             target = (root / document_id).resolve()
@@ -121,4 +131,3 @@ class FileStorage:
             if content.startswith((b"%PDF-", b"PK\x03\x04")):
                 raise AppError("UNSUPPORTED_FILE_TYPE", "文件内容与扩展名不匹配", 415)
         return MIME_BY_EXTENSION[suffix]
-

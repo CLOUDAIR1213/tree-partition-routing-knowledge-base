@@ -1,0 +1,17 @@
+{
+  "document_id": "doc_e2f4f651ee8b8f18b358daa4",
+  "title": "sample-finance",
+  "sections": [
+    {
+      "order": 0,
+      "text": "Test Finance Fixture\nFictional PDF for parser tests\nSubmit within 15 workdays.",
+      "title": null,
+      "section_path": "第 1 页",
+      "page_start": 1,
+      "page_end": 1
+    }
+  ],
+  "chunk_ids": [
+    "doc_e2f4f651ee8b8f18b358daa4:v1:00000"
+  ]
+}

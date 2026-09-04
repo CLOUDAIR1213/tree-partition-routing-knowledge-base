@@ -40,6 +40,96 @@
         "title": "Body_upload_document_api_v1_documents_post",
         "type": "object"
       },
+      "ChangeDocumentPartitionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed_partition": {
+            "$ref": "#/components/schemas/Partition"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reviewer_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Name"
+          }
+        },
+        "required": [
+          "confirmed_partition"
+        ],
+        "title": "ChangeDocumentPartitionRequest",
+        "type": "object"
+      },
+      "ChangeDocumentPartitionResponse": {
+        "properties": {
+          "confirmed_partition": {
+            "$ref": "#/components/schemas/Partition"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "previous_partition": {
+            "$ref": "#/components/schemas/Partition"
+          },
+          "reindexed_chunk_count": {
+            "title": "Reindexed Chunk Count",
+            "type": "integer"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "reviewed_at": {
+            "format": "date-time",
+            "title": "Reviewed At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          }
+        },
+        "required": [
+          "document_id",
+          "previous_partition",
+          "confirmed_partition",
+          "status",
+          "reindexed_chunk_count",
+          "reviewed_at",
+          "review_note",
+          "request_id"
+        ],
+        "title": "ChangeDocumentPartitionResponse",
+        "type": "object"
+      },
       "ChatRequest": {
         "additionalProperties": false,
         "properties": {
@@ -125,6 +215,9 @@
             "title": "Suggested Partitions",
             "type": "array"
           },
+          "timing": {
+            "$ref": "#/components/schemas/ChatTiming"
+          },
           "warning": {
             "anyOf": [
               {
@@ -159,6 +252,48 @@
           "warning"
         ],
         "title": "ChatResponse",
+        "type": "object"
+      },
+      "ChatTiming": {
+        "properties": {
+          "answer_llm_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Llm Ms"
+          },
+          "retrieval": {
+            "items": {
+              "$ref": "#/components/schemas/PartitionTiming"
+            },
+            "title": "Retrieval",
+            "type": "array"
+          },
+          "router_llm_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Router Llm Ms"
+          }
+        },
+        "required": [
+          "retrieval",
+          "router_llm_ms",
+          "answer_llm_ms"
+        ],
+        "title": "ChatTiming",
         "type": "object"
       },
       "ChunkPreviewItem": {
@@ -208,6 +343,10 @@
             ],
             "title": "Section Path"
           },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
           "title": {
             "anyOf": [
               {
@@ -227,6 +366,7 @@
           "section_path",
           "page_start",
           "page_end",
+          "text",
           "preview"
         ],
         "title": "ChunkPreviewItem",
@@ -266,6 +406,16 @@
           "offset": {
             "title": "Offset",
             "type": "integer"
+          },
+          "parse_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParseQualityReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "request_id": {
             "title": "Request Id",
@@ -381,6 +531,35 @@
         "title": "DecisionSource",
         "type": "string"
       },
+      "DeleteDocumentResponse": {
+        "properties": {
+          "deleted": {
+            "const": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "removed_chunk_count": {
+            "title": "Removed Chunk Count",
+            "type": "integer"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "deleted",
+          "removed_chunk_count",
+          "request_id"
+        ],
+        "title": "DeleteDocumentResponse",
+        "type": "object"
+      },
       "DocumentDetailResponse": {
         "properties": {
           "chunk_count": {
@@ -435,6 +614,16 @@
           "original_filename": {
             "title": "Original Filename",
             "type": "string"
+          },
+          "parse_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParseQualityReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "request_id": {
             "title": "Request Id",
@@ -553,6 +742,8 @@
           "parsing",
           "pending_review",
           "indexing",
+          "reindexing",
+          "deleting",
           "ready",
           "rejected",
           "failed"
@@ -760,6 +951,118 @@
         "title": "IndexHealth",
         "type": "object"
       },
+      "ParseQualityReport": {
+        "properties": {
+          "average_chunk_tokens": {
+            "minimum": 0.0,
+            "title": "Average Chunk Tokens",
+            "type": "number"
+          },
+          "blank_page_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Blank Page Numbers",
+            "type": "array"
+          },
+          "chunk_count": {
+            "minimum": 0.0,
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "heading_recognition_rate": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Heading Recognition Rate",
+            "type": "number"
+          },
+          "max_chunk_tokens": {
+            "minimum": 0.0,
+            "title": "Max Chunk Tokens",
+            "type": "integer"
+          },
+          "min_chunk_tokens": {
+            "minimum": 0.0,
+            "title": "Min Chunk Tokens",
+            "type": "integer"
+          },
+          "near_limit_chunk_count": {
+            "minimum": 0.0,
+            "title": "Near Limit Chunk Count",
+            "type": "integer"
+          },
+          "over_limit_chunk_count": {
+            "minimum": 0.0,
+            "title": "Over Limit Chunk Count",
+            "type": "integer"
+          },
+          "page_count": {
+            "minimum": 0.0,
+            "title": "Page Count",
+            "type": "integer"
+          },
+          "partition_suggestion": {
+            "$ref": "#/components/schemas/PartitionSuggestion"
+          },
+          "section_count": {
+            "minimum": 0.0,
+            "title": "Section Count",
+            "type": "integer"
+          },
+          "short_chunk_count": {
+            "minimum": 0.0,
+            "title": "Short Chunk Count",
+            "type": "integer"
+          },
+          "source_format": {
+            "enum": [
+              "pdf",
+              "docx",
+              "markdown",
+              "text"
+            ],
+            "title": "Source Format",
+            "type": "string"
+          },
+          "table_count": {
+            "minimum": 0.0,
+            "title": "Table Count",
+            "type": "integer"
+          },
+          "titled_section_count": {
+            "minimum": 0.0,
+            "title": "Titled Section Count",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_format",
+          "section_count",
+          "titled_section_count",
+          "heading_recognition_rate",
+          "page_count",
+          "blank_page_numbers",
+          "table_count",
+          "chunk_count",
+          "min_chunk_tokens",
+          "max_chunk_tokens",
+          "average_chunk_tokens",
+          "short_chunk_count",
+          "near_limit_chunk_count",
+          "over_limit_chunk_count",
+          "partition_suggestion",
+          "warnings"
+        ],
+        "title": "ParseQualityReport",
+        "type": "object"
+      },
       "Partition": {
         "enum": [
           "finance",
@@ -768,6 +1071,143 @@
         ],
         "title": "Partition",
         "type": "string"
+      },
+      "PartitionSuggestion": {
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "partition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Partition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "partition",
+          "confidence",
+          "reasons"
+        ],
+        "title": "PartitionSuggestion",
+        "type": "object"
+      },
+      "PartitionTiming": {
+        "properties": {
+          "elapsed_ms": {
+            "minimum": 0.0,
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/Partition"
+          }
+        },
+        "required": [
+          "partition",
+          "elapsed_ms"
+        ],
+        "title": "PartitionTiming",
+        "type": "object"
+      },
+      "ReopenDocumentReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reviewer_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Name"
+          }
+        },
+        "title": "ReopenDocumentReviewRequest",
+        "type": "object"
+      },
+      "ReopenDocumentReviewResponse": {
+        "properties": {
+          "confirmed_partition": {
+            "title": "Confirmed Partition",
+            "type": "null"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "previous_partition": {
+            "$ref": "#/components/schemas/Partition"
+          },
+          "removed_indexed_chunk_count": {
+            "title": "Removed Indexed Chunk Count",
+            "type": "integer"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "reviewed_at": {
+            "format": "date-time",
+            "title": "Reviewed At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          }
+        },
+        "required": [
+          "document_id",
+          "previous_partition",
+          "confirmed_partition",
+          "status",
+          "removed_indexed_chunk_count",
+          "reviewed_at",
+          "review_note",
+          "request_id"
+        ],
+        "title": "ReopenDocumentReviewResponse",
+        "type": "object"
       },
       "ReviewAction": {
         "enum": [
@@ -919,6 +1359,9 @@
             "title": "Original Filename",
             "type": "string"
           },
+          "parse_quality": {
+            "$ref": "#/components/schemas/ParseQualityReport"
+          },
           "request_id": {
             "title": "Request Id",
             "type": "string"
@@ -945,6 +1388,7 @@
           "status",
           "chunk_count",
           "warnings",
+          "parse_quality",
           "request_id"
         ],
         "title": "UploadDocumentResponse",
@@ -1060,6 +1504,39 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "partition",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Partition"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Partition"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
             }
           },
           {
@@ -1204,6 +1681,97 @@
       }
     },
     "/api/v1/documents/{document_id}": {
+      "delete": {
+        "operationId": "delete_document_api_v1_documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "pattern": "^doc_[0-9a-f]{24}$",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteDocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Delete Document",
+        "tags": [
+          "documents"
+        ]
+      },
       "get": {
         "operationId": "get_document_api_v1_documents__document_id__get",
         "parameters": [
@@ -1291,6 +1859,109 @@
           }
         },
         "summary": "Get Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/partition": {
+      "post": {
+        "operationId": "change_document_partition_api_v1_documents__document_id__partition_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "pattern": "^doc_[0-9a-f]{24}$",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeDocumentPartitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeDocumentPartitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Change Document Partition",
         "tags": [
           "documents"
         ]
@@ -1407,6 +2078,109 @@
           }
         },
         "summary": "Preview Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/reopen-review": {
+      "post": {
+        "operationId": "reopen_document_review_api_v1_documents__document_id__reopen_review_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "pattern": "^doc_[0-9a-f]{24}$",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReopenDocumentReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReopenDocumentReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Reopen Document Review",
         "tags": [
           "documents"
         ]

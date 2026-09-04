@@ -46,6 +46,7 @@ export function ChunkPreviewList({
         {data.items.map((chunk) => {
           const isExpanded = expanded.has(chunk.chunk_id);
           const section = chunk.section_path || chunk.title || "未命名章节";
+          const text = chunk.text || chunk.preview;
           return (
             <li key={chunk.chunk_id}>
               <div className="chunk-number">{chunk.chunk_index + 1}</div>
@@ -54,10 +55,10 @@ export function ChunkPreviewList({
                   <strong>{section}</strong>
                   <span>{pageRange(chunk.page_start, chunk.page_end)}</span>
                 </div>
-                <p data-expanded={isExpanded}>{chunk.preview}</p>
+                <p data-expanded={isExpanded}>{text}</p>
                 <div className="chunk-footer">
                   <code>{chunk.chunk_id}</code>
-                  {chunk.preview.length > 150 && (
+                  {text.length > 150 && (
                     <button onClick={() => toggle(chunk.chunk_id)} type="button">
                       {isExpanded ? (
                         <ChevronUp aria-hidden="true" size={14} />

@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import Settings, get_settings
@@ -155,6 +156,28 @@ def create_app(
     app.include_router(chat_router, prefix="/api/v1")
     app.include_router(documents_router, prefix="/api/v1")
     app.include_router(health_router, prefix="/api/v1")
+
+    if settings.serve_frontend:
+        index_path = settings.frontend_dist_dir / "index.html"
+        assets_path = settings.frontend_dist_dir / "assets"
+        if not index_path.is_file() or not assets_path.is_dir():
+            raise RuntimeError(
+                "SERVE_FRONTEND=true requires a frontend production build in "
+                f"{settings.frontend_dist_dir}"
+            )
+
+        app.mount(
+            "/assets",
+            StaticFiles(directory=assets_path),
+            name="frontend-assets",
+        )
+
+        @app.get("/{frontend_path:path}", include_in_schema=False)
+        async def frontend_application(frontend_path: str) -> FileResponse:
+            if frontend_path.startswith("api/"):
+                raise StarletteHTTPException(status_code=404)
+            return FileResponse(index_path)
+
     return app
 
 

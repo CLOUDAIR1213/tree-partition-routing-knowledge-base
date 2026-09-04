@@ -1,5 +1,7 @@
 import { BookOpen, Database, Globe2, ShieldAlert } from "lucide-react";
 import { useEffect, useRef } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Partition } from "../../api/types";
 import { getRouteLabel, partitionLabels } from "../../constants/partitions";
 import type { ChatMessage } from "./ChatSessionContext";
@@ -39,6 +41,29 @@ function groupCitations(message: ChatMessage) {
     .filter((group) => group.citations.length > 0);
 }
 
+function MessageTiming({ timing }: { timing?: ChatMessage["timing"] }) {
+  if (!timing) return null;
+  const retrieval = timing.retrieval
+    .map((item) => `${partitionLabels[item.partition]} ${item.elapsed_ms} ms`)
+    .join(" · ");
+  const model = [
+    timing.router_llm_ms === null ? null : `路由 ${timing.router_llm_ms} ms`,
+    timing.answer_llm_ms === null ? null : `回答 ${timing.answer_llm_ms} ms`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (!retrieval && !model) return null;
+  return (
+    <div className="message-timing" aria-label="本轮性能耗时">
+      {retrieval && (
+        <span title="索引检索与本地证据校验耗时">索引 {retrieval}</span>
+      )}
+      {model && <span title="模型调用及本地输出校验耗时">模型 {model}</span>}
+    </div>
+  );
+}
+
 export function MessageList({
   messages,
   loading,
@@ -66,16 +91,46 @@ export function MessageList({
             </div>
           )}
           <div className="message-body">
-            {message.role === "assistant" && message.route && (
-              <div className="message-meta">
-                {messageSourceLabel(message)}
+            {message.role === "assistant" && (message.route || message.timing) && (
+              <div className="message-header">
+                {message.route && (
+                  <div
+                    className={`message-meta ${
+                      message.route === "clarify" ? "message-meta--clarify" : ""
+                    }`}
+                  >
+                    {messageSourceLabel(message)}
+                  </div>
+                )}
+                <MessageTiming timing={message.timing} />
               </div>
             )}
-            <p>{message.content}</p>
+            {message.role === "assistant" ? (
+              <Markdown
+                components={{
+                  a: ({ children, href }) => (
+                    <a href={href} rel="noreferrer" target="_blank">
+                      {children}
+                    </a>
+                  ),
+                  img: () => null,
+                }}
+                remarkPlugins={[remarkGfm]}
+                skipHtml
+              >
+                {message.content}
+              </Markdown>
+            ) : (
+              <p>{message.content}</p>
+            )}
             {message.warning && <p className="message-warning">{message.warning}</p>}
 
             {!!message.suggestedPartitions?.length && (
-              <div className="clarify-actions" aria-label="选择检索分区">
+              <div
+                className="clarify-actions"
+                aria-label="选择检索分区"
+                role="group"
+              >
                 {message.suggestedPartitions.map((partition) => (
                   <button
                     key={partition}

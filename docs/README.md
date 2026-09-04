@@ -1,7 +1,7 @@
 # 项目文档导航
 
 > 文档状态：现行  
-> 最近核对：2026-09-02  
+> 最近核对：2026-09-03
 > 代码基线：`61c551f` 加当前工作树快照
 
 本目录是开发者和编码 Agent 理解项目的首要入口。开始修改代码前，先按本页确定阅读范围，再检查对应代码；不要从归档规格或单个文件名猜测当前行为。
@@ -25,6 +25,8 @@
 | 聊天、路由、检索、LLM、引用 | [聊天与分区路由](features/chat-and-routing.md) | [数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md)、[测试策略](testing/strategy.md) |
 | 上传、格式校验、解析、Chunking | [文档接入](features/document-ingestion.md) | [数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md) |
 | 预览、审核、批准、拒绝、索引写入 | [文档审核与索引](features/document-review-indexing.md) | [数据与存储](architecture/data-and-storage.md)、[测试策略](testing/strategy.md) |
+| 知识库目录、文档详情、筛选、Chunk 顺序展示 | [知识库目录与文档详情](features/knowledge-library-browser.md) | [文档接入](features/document-ingestion.md)、[文档审核与索引](features/document-review-indexing.md)、[数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md) |
+| 真实仿真知识内容、人工上传包、演示数据替换规划 | [真实仿真知识内容构建与人工入库](features/realistic-knowledge-content.md) | [文档接入](features/document-ingestion.md)、[文档审核与索引](features/document-review-indexing.md)、[数据与存储](architecture/data-and-storage.md)、[测试数据规范](testing/test-data.md) |
 | 健康检查、错误响应、Request ID、应用启动 | [系统运行时](features/system-runtime.md) | [本地开发](operations/local-development.md)、[API 契约](contracts/api-conventions.md) |
 | 数据库、文件目录、txtai 索引 | 受影响的全部功能文档 | [数据与存储](architecture/data-and-storage.md) |
 | OpenAPI、前端生成类型、API Client | 受影响的全部功能文档 | [API 契约](contracts/api-conventions.md) |
@@ -43,6 +45,8 @@
 - [聊天与分区路由](features/chat-and-routing.md)：手动路由、自动单/双分区路由、检索、回答和引用。
 - [文档接入](features/document-ingestion.md)：上传、文件安全校验、解析和 Chunking。
 - [文档审核与索引](features/document-review-indexing.md)：详情、预览、审核状态和索引写入补偿。
+- [知识库目录与文档详情](features/knowledge-library-browser.md)：目录筛选、全状态详情、Chunk 原始顺序展示、审核入口和文档删除/分区管理。
+- [真实仿真知识内容构建与人工入库](features/realistic-knowledge-content.md)：已生成、待用户上传的 10 文件人工上传包、固定公司事实、Luna 执行边界和验收规则。
 - [系统运行时](features/system-runtime.md)：应用生命周期、健康检查、错误契约和请求标识。
 
 ### 共享专题

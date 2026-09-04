@@ -18,10 +18,11 @@ function messageId() {
 }
 
 function responseText(response: ChatResponse) {
+  if (response.code === "ROUTE_CLARIFICATION_REQUIRED") {
+    return "当前问题可能涉及多个分区，请选择一个最相关的分区继续。";
+  }
   if (response.answer) return response.answer;
   switch (response.code) {
-    case "ROUTE_CLARIFICATION_REQUIRED":
-      return "这个问题可能涉及多个知识分区，请先选择最相关的分区。";
     case "NO_INTERNAL_EVIDENCE":
       return "当前内部知识库中没有足够依据回答这个问题。";
     case "SENSITIVE_INPUT_BLOCKED":
@@ -109,6 +110,7 @@ export function ChatPage() {
         suggestedPartitions: response.suggested_partitions,
         requestId: response.request_id,
         warning: response.warning,
+        timing: response.timing,
       };
       appendMessage(requestContext.conversationId, assistantMessage);
       finishRequest(requestContext.conversationId, requestContext.requestId);

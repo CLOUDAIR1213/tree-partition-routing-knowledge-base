@@ -44,6 +44,8 @@ class DocumentStatus(StrEnum):
     PARSING = "parsing"
     PENDING_REVIEW = "pending_review"
     INDEXING = "indexing"
+    REINDEXING = "reindexing"
+    DELETING = "deleting"
     READY = "ready"
     REJECTED = "rejected"
     FAILED = "failed"

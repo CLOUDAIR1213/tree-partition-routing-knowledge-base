@@ -1,3 +1,5 @@
+from time import perf_counter
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import (
@@ -11,6 +13,7 @@ from app.models.enums import (
 from app.models.schemas import (
     ChatRequest,
     ChatResponse,
+    ChatTiming,
     Citation,
     LLMRoutePlan,
     RetrievalGroup,
@@ -61,9 +64,14 @@ class ChatService:
         payload: ChatRequest,
         request_id: str,
     ) -> ChatResponse:
+        timing = ChatTiming(
+            retrieval=[],
+            router_llm_ms=None,
+            answer_llm_ms=None,
+        )
         safety = self.safety.inspect(payload.question)
         if safety.action == SafetyAction.BLOCKED:
-            return ChatResponse(
+            return self._with_timing(ChatResponse(
                 code="SENSITIVE_INPUT_BLOCKED",
                 answer="问题包含密钥、密码或其他秘密值，请删除后重新提交。",
                 route=RouteName.CLARIFY,
@@ -76,7 +84,7 @@ class ChatService:
                 suggested_partitions=[],
                 request_id=request_id,
                 warning="敏感输入未发送给索引或外部模型。",
-            )
+            ), timing)
 
         question = safety.safe_question or payload.question
         if payload.partition_hint is not None:
@@ -90,9 +98,12 @@ class ChatService:
             )
             decision_source = DecisionSource.USER_HINT
         else:
+            router_started_at = perf_counter() if self.router is not None else None
             routed = await self._route(question, request_id, safety.action)
+            if router_started_at is not None:
+                timing.router_llm_ms = self._elapsed_ms(router_started_at)
             if isinstance(routed, ChatResponse):
-                return routed
+                return self._with_timing(routed, timing)
             plan = routed
             decision_source = DecisionSource.LLM
 
@@ -101,7 +112,11 @@ class ChatService:
             if plan.route_kind == RouteKind.COMPOSITE
             else self.retrieval_top_k
         )
-        groups = await self.retriever.search_groups(session, plan.subqueries, limit)
+        groups, timing.retrieval = await self.retriever.search_groups_with_timings(
+            session,
+            plan.subqueries,
+            limit,
+        )
         route = (
             RouteName.COMPOSITE
             if plan.route_kind == RouteKind.COMPOSITE
@@ -109,7 +124,7 @@ class ChatService:
         )
         searched_partitions = [group.partition for group in groups]
         if not any(group.hits for group in groups):
-            return await self._answer_without_internal_evidence(
+            response = await self._answer_without_internal_evidence(
                 question=question,
                 allow_web_fallback=payload.allow_web_fallback,
                 groups=groups,
@@ -117,22 +132,28 @@ class ChatService:
                 decision_source=decision_source,
                 request_id=request_id,
                 safety_action=safety.action,
+                timing=timing,
             )
+            return self._with_timing(response, timing)
 
         if self.answerer is not None:
             try:
+                answer_started_at = perf_counter()
                 draft = await self.answerer.answer(question, groups)
+                timing.answer_llm_ms = self._elapsed_ms(answer_started_at)
             except LLMProviderError:
-                return self._build_extractive_answer(
+                timing.answer_llm_ms = self._elapsed_ms(answer_started_at)
+                return self._with_timing(self._build_extractive_answer(
                     groups,
                     route,
                     decision_source,
                     request_id,
                     safety.action,
                     "回答模型暂不可用，已回退为抽取式回答。",
-                )
+                ), timing)
             except LLMOutputError:
-                return ChatResponse(
+                timing.answer_llm_ms = self._elapsed_ms(answer_started_at)
+                return self._with_timing(ChatResponse(
                     code="NO_INTERNAL_EVIDENCE",
                     answer="回答模型返回的引用未通过校验，暂时无法提供有依据的回答。",
                     route=route,
@@ -148,8 +169,8 @@ class ChatService:
                         safety.action,
                         "模型输出未通过本地证据白名单校验。",
                     ),
-                )
-            return self._build_llm_answer(
+                ), timing)
+            return self._with_timing(self._build_llm_answer(
                 draft.answer,
                 draft.citation_chunk_ids,
                 groups,
@@ -157,21 +178,29 @@ class ChatService:
                 decision_source,
                 request_id,
                 safety.action,
-            )
+            ), timing)
 
         fallback_warning = (
             "回答模型未配置，已使用抽取式回答。"
             if self.answer_mode == "llm"
             else None
         )
-        return self._build_extractive_answer(
+        return self._with_timing(self._build_extractive_answer(
             groups,
             route,
             decision_source,
             request_id,
             safety.action,
             fallback_warning,
-        )
+        ), timing)
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return round((perf_counter() - started_at) * 1000)
+
+    @staticmethod
+    def _with_timing(response: ChatResponse, timing: ChatTiming) -> ChatResponse:
+        return response.model_copy(update={"timing": timing})
 
     async def _route(
         self,
@@ -309,6 +338,7 @@ class ChatService:
         decision_source: DecisionSource,
         request_id: str,
         safety_action: SafetyAction,
+        timing: ChatTiming,
     ) -> ChatResponse:
         searched_partitions = [group.partition for group in groups]
 
@@ -350,9 +380,12 @@ class ChatService:
             return unavailable("联网搜索没有返回可验证的公开来源。")
 
         try:
+            answer_started_at = perf_counter()
             draft = await self.web_answerer.answer(question, results)
         except (LLMProviderError, LLMOutputError):
+            timing.answer_llm_ms = self._elapsed_ms(answer_started_at)
             return unavailable("联网结果不足以形成带来源的可靠回答。")
+        timing.answer_llm_ms = self._elapsed_ms(answer_started_at)
 
         by_url = {result.url: result for result in results}
         web_citations = [

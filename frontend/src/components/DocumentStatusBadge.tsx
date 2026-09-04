@@ -1,7 +1,9 @@
 import {
+  ArrowRightLeft,
   CheckCircle2,
   Clock3,
   LoaderCircle,
+  Trash2,
   UploadCloud,
   XCircle,
 } from "lucide-react";
@@ -12,6 +14,8 @@ const statusConfig = {
   parsing: { label: "解析中", Icon: LoaderCircle },
   pending_review: { label: "待审核", Icon: Clock3 },
   indexing: { label: "入库中", Icon: LoaderCircle },
+  reindexing: { label: "调整索引中", Icon: ArrowRightLeft },
+  deleting: { label: "删除中", Icon: Trash2 },
   ready: { label: "已入库", Icon: CheckCircle2 },
   rejected: { label: "已拒绝", Icon: XCircle },
   failed: { label: "处理失败", Icon: XCircle },

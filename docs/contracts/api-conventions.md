@@ -1,6 +1,6 @@
 # API 契约与错误约定
 
-> 最近核对：2026-09-02  
+> 最近核对：2026-09-03
 > 代码基线：`61c551f` 加当前工作树快照
 
 ## 1. 契约来源
@@ -40,6 +40,9 @@ FastAPI routes + Pydantic schemas
 | `GET` | `/api/v1/documents/{document_id}` | 文档详情 | `DocumentDetailResponse` |
 | `GET` | `/api/v1/documents/{document_id}/preview` | Chunk 分页预览 | `ChunkPreviewResponse` |
 | `POST` | `/api/v1/documents/{document_id}/review` | 批准或拒绝 | `ReviewResponse` |
+| `POST` | `/api/v1/documents/{document_id}/partition` | 调整已入库文档分区 | `ChangeDocumentPartitionResponse` |
+| `POST` | `/api/v1/documents/{document_id}/reopen-review` | 退回重新审核 | `ReopenDocumentReviewResponse` |
+| `DELETE` | `/api/v1/documents/{document_id}` | 删除文档的跨存储数据 | `DeleteDocumentResponse` |
 | `GET` | `/api/v1/health` | 组件健康和模型配置状态 | `HealthResponse` 或 503 错误体 |
 
 端点的业务流程和修改边界见对应[功能文档](../README.md)。完整字段、枚举和 required/nullability 以 `contracts/openapi.json` 为准。
@@ -77,13 +80,14 @@ FastAPI routes + Pydantic schemas
 - 每条 Citation 都包含 partition，并且该 partition 必须已被检索。
 - `answer_source=internal` 时必须只有内部 `citations`；`answer_source=web` 时必须只有 `web_citations`；`answer_source=none` 时两类引用都为空。
 - `ChatRequest.allow_web_fallback` 默认关闭；`searched_partitions` 始终只表示实际访问的内部索引。
+- `ChatResponse.timing.retrieval` 与 `searched_partitions` 一一对应，记录每个分区的索引查询加本地证据校验耗时；`router_llm_ms` 和 `answer_llm_ms` 只在对应模型实际调用时返回非空毫秒值。
 - 后端 Pydantic 和前端 `assertChatContract` 都执行这些结构校验。
 
 ## 6. 前端 API Client
 
 `frontend/src/api/client.ts` 提供统一 fetch：
 
-- 默认超时 30 秒；聊天为 100 秒；上传和审核为 120 秒。
+- 默认超时 30 秒；聊天为 100 秒；上传、审核和文档管理操作为 120 秒。
 - JSON body 自动设置 `Content-Type: application/json`。
 - FormData 不设置 Content-Type。
 - 非 2xx 转换为 `ApiError`；无法识别的错误体转换为 `INVALID_ERROR_RESPONSE`。
@@ -115,7 +119,7 @@ FastAPI routes + Pydantic schemas
 
 ## 8. 当前契约状态
 
-2026-09-02 使用 `create_app().openapi()` 与 `contracts/openapi.json` 做内存比较，结果一致，共 7 个 HTTP operations。前端生成类型包含 composite route、`searched_partitions`、`answer_source`、内部/网络 Citation 和 HealthResponse 的模型与搜索配置状态。
+2026-09-03 使用 `create_app().openapi()` 与 `contracts/openapi.json` 做内存比较，结果一致，共 10 个 HTTP operations。前端生成类型包含问答、文档接入、审核、删除、改分区、重新审核和健康检查契约。
 
 ## 9. 修改边界
 

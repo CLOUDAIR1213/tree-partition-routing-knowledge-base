@@ -1,13 +1,13 @@
 # 聊天与分区路由
 
 > 文档状态：已实现  
-> 最近核对：2026-09-02  
+> 最近核对：2026-09-03
 > 代码基线：`61c551f` 加当前工作树快照  
 > 维护责任：待指定
 
 ## 1. 功能说明
 
-聊天功能接收企业知识问题，在财务、人事和技术三个知识分区中选择一个或两个分区检索，并基于已审核证据返回回答和可追溯引用。用户可以显式指定分区，也可以让 Router LLM 自动判断单一分区、复合分区或要求澄清。用户显式授权后，全部内部检索均无证据的公开低风险问题可以使用受限网络搜索兜底。
+聊天功能接收企业知识问题，在财务、人事和技术三个知识分区中选择一个或两个分区检索，并基于已审核证据返回回答和可追溯引用。用户可以显式指定分区，也可以让 Router LLM 自动判断单一分区、复合分区或要求澄清。用户显式授权后，全部内部检索均无证据的公开低风险问题可以使用受限网络搜索兜底。每条 assistant 回答还返回分区检索与模型调用的独立耗时，用于区分索引性能与模型等待时间。
 
 代码、契约和 Fake Provider 测试已覆盖内部单分区、复合路由、低分过滤及受限联网兜底。真实模型只完成两条内部问答兼容性冒烟；真实 Tavily 请求本轮返回 HTTP 401，当前知识 fixture 也不代表业务回答质量已通过。
 
@@ -15,7 +15,7 @@
 
 | 类型 | 内容 |
 | --- | --- |
-| 包含 | 输入安全；手动单分区；自动单分区；最多两个分区复合路由；独立检索；`ready` 校验；LLM 或抽取式内部回答；显式授权的零证据受限联网；内部与网络来源白名单；前端来源区分；浏览器本地会话管理 |
+| 包含 | 输入安全；手动单分区；自动单分区；最多两个分区复合路由；独立检索；`ready` 校验；LLM 或抽取式内部回答；显式授权的零证据受限联网；内部与网络来源白名单；受限 Markdown 回答展示；浏览器本地会话管理 |
 | 不包含 | 三分区同时检索；内部与网络证据混合回答；任意网页抓取；登录、下载和脚本执行；服务端持久会话；跨设备同步；跨轮上下文；路由置信度；模型质量评估；基于身份的知识权限 |
 
 ## 3. 用户流程与状态
@@ -24,12 +24,12 @@
 2. 前端在发送时创建不可变的请求上下文：`requestId`、`conversationId`、`userMessageId` 和 `assistantMessageId`。用户消息、加载状态、成功回答、失败状态和重试输入都只使用其中的 `conversationId`；`activeConversationId` 只决定当前展示哪个会话。
 3. 前端调用 `POST /api/v1/chat`，请求期间保留输入并显示该请求所属会话的加载状态；用户可切换到其他会话，原请求继续在后台执行。
 4. 后端先阻断秘密值，或对邮箱、手机号、私网 IP 脱敏。
-5. 存在 `partition_hint` 时跳过 Router；否则 Router 返回 `single`、`composite` 或 `clarify`。
-6. Retriever 逐个访问计划中的索引，过滤低于 `RETRIEVAL_MIN_SCORE` 的召回，再用 SQLite 过滤非 `ready` 或分区不匹配的结果。
-7. 有内部证据时由 Answer LLM 生成回答；未配置、超时或传输失败时使用每个分区首个 Chunk 的抽取式回答，不进入联网。
+5. 存在 `partition_hint` 时跳过 Router；否则 Router 返回 `single`、`composite` 或 `clarify`。公司基础信息（如公司简介、组织概况、主营业务、使命愿景、办公地点或联系渠道）默认路由为人事单分区；仅当同时存在可独立检索的财务或技术事项时才使用复合路由。
+6. Retriever 逐个访问计划中的索引，过滤低于 `RETRIEVAL_MIN_SCORE` 的召回，再用 SQLite 过滤非 `ready` 或分区不匹配的结果，同时按分区记录“索引检索加本地证据校验”耗时。
+7. 自动路由和 Answer LLM 分别记录调用及本地输出校验耗时；有内部证据时由 Answer LLM 生成回答，未配置、超时或传输失败时使用每个分区首个 Chunk 的抽取式回答，不进入联网。
 8. 全部内部检索组均为空、用户通过输入框左下角的“未命中时联网”图标开关显式启用联网且问题通过低风险资格判断时，Tavily Provider 最多返回 5 条结构化结果，再由独立 Web Answer Prompt 生成最多 3 条来源的回答。
-9. 后端分别校验内部 Chunk ID 或网页 URL 白名单；前端校验 `answer_source` 与两类 Citation 的互斥形状。
-10. `clarify` 响应展示三个分区按钮；选择后使用原问题发起手动单分区请求，clarify 本身不触发联网。
+9. 后端分别校验内部 Chunk ID 或网页 URL 白名单；Answer 的 JSON `answer` 字段可包含受限 Markdown。前端校验 `answer_source`、计时字段及两类 Citation 的互斥形状，只为 assistant 消息渲染 Markdown，并在其右上角显示本轮计时。
+10. `clarify` 响应在助手消息内展示统一提示语和三个内容自适应的轻量分区按钮；选择后使用原问题发起手动单分区请求，clarify 本身不触发联网。
 
 本地会话清理流程：用户从最近会话的更多菜单删除单条会话，或从最近会话标题区清空全部历史；两种破坏性操作都先显示确认对话框。删除当前会话后选择列表中相邻会话，没有剩余项时创建空会话，并把结果写入现有浏览器快照。连续点击“开启新对话”会替换尚无消息的空会话，不积累不可见空项。
 
@@ -59,12 +59,16 @@
 | `frontend/src/features/chat/chatSessionStorage.ts` | 会话存储适配 | 使用带版本号的 `localStorage` 格式；读取失败时回退为空会话 |
 | `frontend/src/components/layout/AppSidebar.tsx` | 会话导航 | 展示最近会话；提供单条更多菜单、清空入口和确认对话框 |
 | `frontend/src/features/chat/ChatComposer.tsx` | 问题输入 | 单行空状态约 90px、高度随多行输入增长；2000 字限制；左右对齐的 30px 圆形联网与发送工具按钮；发送按钮仅在有有效输入时使用主题色；默认关闭的“未命中时联网”图标开关；开启时以低饱和蓝灰图标和浅蓝灰底色表达状态，悬浮提示随状态说明开关含义 |
-| `frontend/src/features/chat/MessageList.tsx` | 回答和引用 | 内部 Citation 按分区分组；网络回答单独显示公开 URL 来源 |
+| `frontend/src/features/chat/MessageList.tsx` | 回答、受限 Markdown、计时、分区澄清和引用 | assistant 右上角显示每个分区的索引检索耗时及 Router/Answer 模型耗时；支持标题、段落、列表、粗体、行内代码和链接；跳过原始 HTML 和图片；`clarify` 使用三个独立轻量按钮，选择后仍按原问题和手动单分区发起请求；内部 Citation 按分区分组；网络回答单独显示公开 URL 来源 |
 | `frontend/src/components/PartitionSelector.tsx` | 路由选择 | 自动模式映射为 `null`；手动模式映射 Partition；分段 Tabs 以低对比灰底、白色选中项和极浅描边表达当前路由 |
 | `frontend/src/constants/partitions.ts` | 分区标签 | 维护三个分区和 composite/clarify 展示文本 |
 | `frontend/src/api/client.ts` | HTTP 和运行时契约校验 | 校验 route、answer_source、内部与网络 Citation 的互斥形状 |
 
 前端不会自行拆分问题或合并多个聊天请求。单一会话在加载时禁止再次提交，但不同会话可同时存在请求；`pendingRequestIds` 以会话为键保存，因此 A 请求进行中时用户可切到 B 并发提问。当前 API 为普通 HTTP 响应，尚未使用 SSE/WebSocket；未来流回调也必须仅使用其创建时固定的 `conversationId` 和 `assistantMessageId`，不得重新读取 UI 当前会话。选择澄清按钮后会重新追加原问题和新的回答，当前没有隐藏或合并前一次 clarify 消息。
+
+回答在服务端始终以 JSON 字段传输，以便校验 Citation 白名单；`answer` 的文本内容可使用受限 Markdown。前端仅使用 `react-markdown` 和 `remark-gfm` 渲染 assistant 内容，显式跳过原始 HTML 和图片，且链接始终以新窗口和 `noreferrer` 打开。用户输入与 warning 保持纯文本，Citation 继续由独立组件渲染，不能由模型 Markdown 覆盖或伪造。
+
+每次 `ChatResponse.timing` 包含顺序与 `searched_partitions` 一致的 `retrieval` 数组，以及可为空的 `router_llm_ms`、`answer_llm_ms`。前端只显示实际发生的指标：手动分区不显示 Router，抽取式回答不显示 Answer 模型。历史会话将计时与 assistant 消息一同存入现有 `localStorage`；格式不合法的快照会整体回退为空会话。
 
 进入活跃会话后，聊天区域占满 Top Bar 下方的可用高度；消息列表使用主内容区最右侧的细滚动条并自动定位到最新消息，消息正文、路由选择器和输入框保持居中，底部控制区始终保留在可见区域。空会话仍由页面容器负责响应式布局。
 
@@ -78,13 +82,13 @@
 | `app/services/chat.py` | 端到端聊天编排 | Safety、Router、Retriever、内部/网络 Answerer |
 | `app/services/input_safety.py` | 本地输入安全 | 正则检测和 IP 地址判断 |
 | `app/services/routing.py` | Router Prompt、解析和一次修复 | LLM Provider、LLMRoutePlan |
-| `app/services/retriever.py` | 分区查询与 SQLite 校验 | IndexRegistry、DocumentTable、ChunkCandidateTable |
+| `app/services/retriever.py` | 分区查询、SQLite 校验和分区级检索计时 | IndexRegistry、DocumentTable、ChunkCandidateTable |
 | `app/services/answering.py` | 内部和网络独立 Prompt 与引用白名单 | LLM Provider、RetrievalGroup、WebSearchResult |
 | `app/services/web_search.py` | Tavily 调用、结果规范化、URL 与问题资格过滤 | httpx、Settings |
 | `app/services/llm.py` | OpenAI-compatible 调用 | httpx Chat Completions |
 | `app/models/schemas.py` | 路由、回答和 HTTP 模型不变量 | Pydantic validators |
 
-Router 输出最多修复一次，必须满足严格 JSON 结构。复合路由必须恰好有两个不同分区。检索按 Router 子查询顺序串行执行，每个分区使用独立 top-k，并按 `RETRIEVAL_MIN_SCORE` 过滤低相关结果；不比较跨索引分数。默认值 `0.5` 适用于当前 Embedding 模型和演示数据，设置为 `0` 可关闭过滤并保留所有召回。
+Router 输出最多修复一次，必须满足严格 JSON 结构。复合路由必须恰好有两个不同分区。Router Prompt 将公司基础信息明确映射为人事单分区，并提供 HR JSON 示例；公司基础信息与可独立检索的财务或技术事项并存时仍使用复合路由。检索按 Router 子查询顺序串行执行，每个分区使用独立 top-k，并按 `RETRIEVAL_MIN_SCORE` 过滤低相关结果；不比较跨索引分数。默认值 `0.5` 适用于当前 Embedding 模型和演示数据，设置为 `0` 可关闭过滤并保留所有召回。
 
 联网 Provider 只接收通过安全检查的原问题并使用 Tavily `basic` 搜索；它不抓取结果页。默认请求超时为 60 秒，可通过 `WEB_SEARCH_TIMEOUT_SECONDS` 在 1–120 秒内调整。只保留公开 HTTPS URL，拒绝本机、私网、保留地址、带凭据 URL 和 `.local` 主机，并移除常见跟踪参数、片段、重复 URL 及同域名第三条以后结果。搜索失败时后端只记录失败类别和 HTTP 状态码，不记录问题、Key 或 Provider 响应正文；前端安全区分认证、限流、HTTP、超时、网络与无效响应。
 
@@ -92,8 +96,8 @@ Router 输出最多修复一次，必须满足严格 JSON 结构。复合路由�
 
 | 存储类型 | 表、目录或索引 | 读/写 | 用途与一致性要求 |
 | --- | --- | --- | --- |
-| React 内存 | `ChatSessionContext` | 读写 | 会话历史、当前 UI `activeId` 与按 `conversationId` 分隔的运行态；运行态不持久化 |
-| 浏览器 `localStorage` | `partitioned-kb.chat-session` | 读写 | 当前浏览器的版本化历史快照；仅会话和消息会恢复，进行中的请求、错误和重试输入不恢复 |
+| React 内存 | `ChatSessionContext` | 读写 | 会话历史、回答计时、当前 UI `activeId` 与按 `conversationId` 分隔的运行态；运行态不持久化 |
+| 浏览器 `localStorage` | `partitioned-kb.chat-session` | 读写 | 当前浏览器的版本化历史快照；回答计时随消息恢复，进行中的请求、错误和重试输入不恢复 |
 | SQLite | `documents` | 只读 | 校验 `ready` 和 `confirmed_partition`，读取标题 |
 | SQLite | `chunk_candidates` | 只读 | 读取回答正文和引用定位 |
 | txtai | `data/indexes/<partition>/` | 只读 | 每个子查询只访问声明分区 |
@@ -108,7 +112,7 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 | --- | --- | --- | --- | --- | --- |
 | `POST` | `/api/v1/chat` | 路由、检索和回答 | `ChatRequest` | `ChatResponse` | `INVALID_PARTITION`、`VALIDATION_ERROR`、`INDEX_NOT_READY`、`PARTITION_ISOLATION_VIOLATION` |
 
-`ChatRequest.allow_web_fallback` 默认 `false`。`ChatResponse.code` 的业务结果为 `OK`、`ROUTE_CLARIFICATION_REQUIRED`、`NO_INTERNAL_EVIDENCE` 或 `SENSITIVE_INPUT_BLOCKED`，这些结果使用 HTTP 200。`answer_source` 为 `internal`、`web` 或 `none`；`citations` 和 `web_citations` 必须按来源互斥。`searched_partitions` 只记录内部索引并保持现有 route 形状。
+`ChatRequest.allow_web_fallback` 默认 `false`。`ChatResponse.code` 的业务结果为 `OK`、`ROUTE_CLARIFICATION_REQUIRED`、`NO_INTERNAL_EVIDENCE` 或 `SENSITIVE_INPUT_BLOCKED`，这些结果使用 HTTP 200。`answer_source` 为 `internal`、`web` 或 `none`；`citations` 和 `web_citations` 必须按来源互斥。`searched_partitions` 只记录内部索引并保持现有 route 形状。`timing.retrieval` 对每个实际访问分区返回毫秒整数，计量 txtai 索引查询与 SQLite 证据校验；`router_llm_ms` 和 `answer_llm_ms` 仅在对应模型实际被调用时有值，不用于检索性能比较。
 
 本地会话删除和清空不调用后端 API，也不修改 SQLite、文件或 txtai 索引。当前后端不提供服务端会话持久化，`ChatRequest` 也不携带 `conversationId`；它只处理一次独立问答。前端在本地生成会话 ID 并在整个网络请求生命周期中固定使用，用于浏览器端消息与运行态归属。
 
@@ -123,11 +127,11 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 | `app/services/web_search.py` | 受限搜索、URL 规范化和资格过滤 | `owned` | 不直接访问结果 URL；保持 Provider 可替换和 Fake 可测试 |
 | `app/services/routing.py` | Router | `owned` | 维持严格输出和最多两个分区 |
 | `app/services/answering.py` | 内部/网络 Answer 与引用校验 | `owned` | 两类来源白名单必须保持隔离 |
-| `app/services/retriever.py` | 检索、分数阈值和 SQLite 校验 | `owned` | 维持分区隔离、最低分数和 ready 过滤 |
+| `app/services/retriever.py` | 检索、分数阈值、SQLite 校验和分区计时 | `owned` | 维持分区隔离、最低分数、ready 过滤和每个已检索分区一条计时 |
 | `app/services/input_safety.py` | 输入安全 | `owned` | 更新安全测试并评估模型数据边界 |
 | `app/services/llm.py` | 共享模型传输 | `shared` | 检查 Router、Answer、配置和健康状态 |
 | `app/api/chat.py` | HTTP 入口 | `owned` | Schema 变化后同步 OpenAPI |
-| `app/models/enums.py`、`app/models/schemas.py` | 跨端模型 | `shared` | 检查文档 API、前端类型和契约 |
+| `app/models/enums.py`、`app/models/schemas.py` | 跨端模型和聊天计时 | `shared` | 检查文档 API、前端类型、契约和历史快照读取 |
 | `app/core/config.py`、`.env.example` | 配置 | `shared` | 同步运行文档、ChatService 消费者和健康检查 |
 | `frontend/src/pages/ChatPage.tsx`、`frontend/src/features/chat/` | 聊天 UI | `owned` | 同步组件测试和交互状态 |
 | `frontend/src/components/layout/AppSidebar.tsx` | 会话历史菜单与确认交互 | `owned` | 同步键盘、触屏和删除确认测试 |
@@ -141,6 +145,7 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 ## 9. 核心不变量与安全约束
 
 - 用户 `partition_hint` 优先级最高，并且跳过 Router。
+- 自动路由中，公司基础信息必须使用 `hr` 单分区；只有同时包含独立财务或技术事项时才可使用复合路由。
 - Router `composite` 只能选择两个不同分区；`clarify` 不得访问索引。
 - 每个子查询只能访问声明的分区索引。
 - 只有 SQLite 中 `ready` 且最终分区匹配的 Chunk 可以成为证据。
@@ -148,6 +153,10 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 - Citation 必须属于本次命中，且 Citation 分区必须在 `searched_partitions` 中。
 - 秘密值不得发送给索引或模型；个人信息和私网地址先脱敏。
 - Answer 输入不得包含服务器路径、校验和、Embedding 文本或未命中正文。
+- Answer 的 `answer` 可以使用受限 Markdown 增强可读性，但不得包含 HTML、图片、代码围栏或自行构造的来源链接；引用必须继续通过结构化 Citation 字段校验和展示。
+- 前端只渲染 assistant Markdown，必须跳过原始 HTML 和图片；用户消息和 warning 不得作为 Markdown 或 HTML 解析。
+- `timing.retrieval` 必须与 `searched_partitions` 一一对应且顺序一致；每项为非负整数毫秒，包含该分区的索引查询与本地证据校验，不包含 Router 或 Answer 模型调用。
+- `router_llm_ms` 与 `answer_llm_ms` 仅在实际调用相应模型时返回非空值；前端不得将模型耗时归入索引性能。
 - 联网必须由当前请求显式授权，并且只能发生在全部内部检索组均无 Chunk 之后。
 - 脱敏问题、内部制度问题、高风险问题、clarify 和 Router 故障不得发送到搜索 Provider。
 - 内部与网络证据不得混合；网页答案只能引用本次规范化搜索结果中的 URL，网页文本中的指令一律视为不可信数据。
@@ -186,7 +195,12 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 | 后端集成 | manual、clarify、composite、联网授权、低分过滤、内部优先、范围拒绝、引用越界 | `tests/integration/test_chat_api.py` |
 | 后端单元 | 邮箱、手机号、私网 IP 脱敏 | `tests/unit/test_input_safety.py` |
 | 后端单元 | 联网资格、公开 HTTPS URL 规范化和搜索失败分类 | `tests/unit/test_web_search.py` |
-| 前端组件 | 单分区提问、内部/网络引用展示、联网开关、网络失败 | `frontend/src/App.test.tsx` |
+| 后端单元 | 公司基础信息的人事路由 Prompt 与 HR JSON 示例 | `tests/unit/test_routing.py` |
+| 前端组件 | 单分区提问、澄清分区选择重发、内部/网络引用展示、联网开关、网络失败 | `frontend/src/App.test.tsx` |
+| 前端 Markdown | assistant 标题、列表、粗体、行内代码、安全链接，以及原始 HTML 和图片跳过 | `frontend/src/App.test.tsx` |
+| 后端计时 | 单分区返回一个检索时间且无未调用模型时间；复合路由返回两个分区检索时间、路由和回答模型时间 | `tests/integration/test_chat_api.py` |
+| 前端计时 | 运行时契约校验与 assistant 右上角展示 | `frontend/src/api/client.test.ts`、`frontend/src/App.test.tsx` |
+| 本地会话计时 | 非法快照计时回退为空会话 | `frontend/src/features/chat/ChatSessionContext.test.tsx` |
 | 前端异步会话 | A 请求后切 B、新会话首次请求后切 B、A/B 并发、切回查看、失败与原会话重试隔离、快速连续切换 | `frontend/src/App.test.tsx` |
 | 前端会话 | 本地历史恢复、损坏数据回退 | `frontend/src/features/chat/ChatSessionContext.test.tsx` |
 | 前端会话 | 删除非当前/当前/唯一会话、清空、空会话去重和持久化删除结果 | `frontend/src/features/chat/ChatSessionContext.test.tsx` |
@@ -194,7 +208,7 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 | 前端 API | JSON 字段、clarify 业务响应 | `frontend/src/api/client.test.ts` |
 | 契约 | OpenAPI 与 FastAPI Schema 一致 | 内存比较或 `scripts.export_openapi` 后检查 diff |
 
-2026-09-02：此前后端 32 个隔离测试、Ruff、Python 编译、OpenAPI 内存比较、前端生产构建和 22 个前端测试通过；本轮联网单元/聊天集成测试 18/18、Ruff 和 Python 编译通过。联网 Fake Provider 测试覆盖显式授权、低分过滤、内部优先、范围拒绝、Provider 结果规范化、来源展示、URL 安全和错误分类。真实只读请求确认 `0.411` 的无关 Docker 命中已被默认 `0.5` 阈值过滤并进入联网分支，Tavily 返回 HTTP 401，未获得网页回答或来源；未写入 RAG 运行数据。此前真实 Router/Answer 的两条只读冒烟仍有效；未运行完整 Playwright E2E 或模型质量评估。内置浏览器确认桌面和 390px 移动端联网开关无重叠且控制台无错误。异步会话归属修复后，前端 Vitest 27/27 通过，覆盖会话切换、首次新会话、跨会话并发、失败、重试和快速连续切换的隔离；未执行真实模型或业务验收。
+2026-09-03：此前后端 32 个隔离测试、Ruff、Python 编译、OpenAPI 内存比较、前端生产构建和 22 个前端测试通过；本轮联网单元/聊天集成测试 18/18、Ruff 和 Python 编译通过。联网 Fake Provider 测试覆盖显式授权、低分过滤、内部优先、范围拒绝、Provider 结果规范化、来源展示、URL 安全和错误分类。真实只读请求确认 `0.411` 的无关 Docker 命中已被默认 `0.5` 阈值过滤并进入联网分支，Tavily 返回 HTTP 401，未获得网页回答或来源；未写入 RAG 运行数据。此前真实 Router/Answer 的两条只读冒烟仍有效；未运行完整 Playwright E2E 或模型质量评估。内置浏览器确认桌面和 390px 移动端联网开关无重叠且控制台无错误。异步会话归属修复后，前端 Vitest 38/38 通过；本轮聊天定向集成测试 13/13、Python 编译、OpenAPI 导出、前端生产构建通过，覆盖分区检索计时、模型计时、运行时契约、右上角展示和非法历史计时回退；公司基础信息人事路由 Prompt 单元测试与完整隔离后端测试 `48/48`、Ruff 通过。未执行真实模型、真实性能基准或业务验收。
 
 ## 12. 已知限制与后续计划
 
@@ -203,6 +217,7 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 - 历史仅保存在当前浏览器的 `localStorage`，没有账号隔离、服务端会话、跨设备同步或跨轮上下文；清理站点数据会删除历史。
 - 刷新页面不会恢复进行中的网络请求、会话级 loading、错误或重试输入；它们只存在于当前 React 运行期。
 - 当前没有流式 API；引入 SSE 或 WebSocket 时，必须复用本功能定义的不可变请求上下文，逐 Chunk 写入原 `conversationId`。
+- 当前指标用于单次本地观测，不是跨机器或跨负载的性能基准；索引预热、SQLite 缓存、CPU 竞争和复合检索的串行执行会影响对比结果。
 - 不支持三个分区问题；这类问题返回 clarify。
 - 没有关键词检索、RRF 或重排器。
 - 输入安全是有限模式匹配，不等同于完整 DLP。

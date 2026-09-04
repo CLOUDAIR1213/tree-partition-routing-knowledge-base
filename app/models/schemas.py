@@ -26,6 +26,17 @@ class ReviewRequest(StrictApiRequest):
     note: str | None = Field(default=None, max_length=500)
 
 
+class ChangeDocumentPartitionRequest(StrictApiRequest):
+    confirmed_partition: Partition
+    reviewer_name: str | None = Field(default=None, max_length=100)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ReopenDocumentReviewRequest(StrictApiRequest):
+    reviewer_name: str | None = Field(default=None, max_length=100)
+    note: str | None = Field(default=None, max_length=500)
+
+
 class ChatRequest(StrictApiRequest):
     question: str = Field(min_length=1, max_length=2000)
     partition_hint: Partition | None = None
@@ -48,6 +59,17 @@ class WebCitation(BaseModel):
     domain: str
 
 
+class PartitionTiming(BaseModel):
+    partition: Partition
+    elapsed_ms: int = Field(ge=0)
+
+
+class ChatTiming(BaseModel):
+    retrieval: list[PartitionTiming]
+    router_llm_ms: int | None = Field(ge=0)
+    answer_llm_ms: int | None = Field(ge=0)
+
+
 class ChatResponse(BaseModel):
     code: Literal[
         "OK",
@@ -66,6 +88,13 @@ class ChatResponse(BaseModel):
     suggested_partitions: list[Partition]
     request_id: str
     warning: str | None
+    timing: ChatTiming = Field(
+        default_factory=lambda: ChatTiming(
+            retrieval=[],
+            router_llm_ms=None,
+            answer_llm_ms=None,
+        )
+    )
 
     @model_validator(mode="after")
     def validate_route_metadata(self) -> "ChatResponse":
@@ -182,6 +211,7 @@ class UploadDocumentResponse(BaseModel):
     status: DocumentStatus
     chunk_count: int
     warnings: list[str]
+    parse_quality: "ParseQualityReport"
     request_id: str
 
 
@@ -204,6 +234,7 @@ class DocumentDetailResponse(DocumentSummaryResponse):
     review_note: str | None
     error_code: str | None
     error_message: str | None
+    parse_quality: "ParseQualityReport | None" = None
     request_id: str
 
 
@@ -222,6 +253,7 @@ class ChunkPreviewItem(BaseModel):
     section_path: str | None
     page_start: int | None
     page_end: int | None
+    text: str
     preview: str
 
 
@@ -236,7 +268,33 @@ class ChunkPreviewResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    parse_quality: "ParseQualityReport | None" = None
     request_id: str
+
+
+class PartitionSuggestion(BaseModel):
+    partition: Partition | None
+    confidence: float = Field(ge=0, le=1)
+    reasons: list[str]
+
+
+class ParseQualityReport(BaseModel):
+    source_format: Literal["pdf", "docx", "markdown", "text"]
+    section_count: int = Field(ge=0)
+    titled_section_count: int = Field(ge=0)
+    heading_recognition_rate: float = Field(ge=0, le=1)
+    page_count: int = Field(ge=0)
+    blank_page_numbers: list[int]
+    table_count: int = Field(ge=0)
+    chunk_count: int = Field(ge=0)
+    min_chunk_tokens: int = Field(ge=0)
+    max_chunk_tokens: int = Field(ge=0)
+    average_chunk_tokens: float = Field(ge=0)
+    short_chunk_count: int = Field(ge=0)
+    near_limit_chunk_count: int = Field(ge=0)
+    over_limit_chunk_count: int = Field(ge=0)
+    partition_suggestion: PartitionSuggestion
+    warnings: list[str]
 
 
 class ReviewResponse(BaseModel):
@@ -247,6 +305,35 @@ class ReviewResponse(BaseModel):
     indexed_chunk_count: int
     reviewed_at: datetime
     review_note: str | None
+    request_id: str
+
+
+class ChangeDocumentPartitionResponse(BaseModel):
+    document_id: str
+    previous_partition: Partition
+    confirmed_partition: Partition
+    status: DocumentStatus
+    reindexed_chunk_count: int
+    reviewed_at: datetime
+    review_note: str | None
+    request_id: str
+
+
+class ReopenDocumentReviewResponse(BaseModel):
+    document_id: str
+    previous_partition: Partition
+    confirmed_partition: None
+    status: DocumentStatus
+    removed_indexed_chunk_count: int
+    reviewed_at: datetime
+    review_note: str | None
+    request_id: str
+
+
+class DeleteDocumentResponse(BaseModel):
+    document_id: str
+    deleted: Literal[True]
+    removed_chunk_count: int
     request_id: str
 
 

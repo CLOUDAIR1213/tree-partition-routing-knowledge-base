@@ -1,0 +1,17 @@
+{
+  "document_id": "doc_9c3f76a0888822537b1242e7",
+  "title": "Runtime Demo",
+  "sections": [
+    {
+      "order": 0,
+      "text": "Docker upstream port must match the proxy setting. Unique smoke 20260901.",
+      "title": "Runtime Demo",
+      "section_path": "Runtime Demo",
+      "page_start": null,
+      "page_end": null
+    }
+  ],
+  "chunk_ids": [
+    "doc_9c3f76a0888822537b1242e7:v1:00000"
+  ]
+}

@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_host: str = "127.0.0.1"
     app_port: int = Field(default=8000, ge=1, le=65535)
+    serve_frontend: bool = False
+    frontend_dist_dir: Path = Path("./frontend/dist")
 
     data_root: Path = Path("./data")
     raw_root: Path = Path("./data/raw")

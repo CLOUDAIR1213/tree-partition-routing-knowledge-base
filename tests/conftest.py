@@ -18,6 +18,7 @@ class FakeIndexRegistry:
             name: [] for name in ("finance", "hr", "tech")
         }
         self.fail_after_upsert = False
+        self.fail_next_upsert = False
 
     def load_all(self) -> None:
         pass
@@ -25,6 +26,9 @@ class FakeIndexRegistry:
     def upsert_and_save(self, partition, rows: list[dict]) -> None:
         self.upsert_calls.append(partition.value)
         self.rows[partition.value].update({row["id"]: row for row in rows})
+        if self.fail_next_upsert:
+            self.fail_next_upsert = False
+            raise RuntimeError("simulated one-time index save failure")
         if self.fail_after_upsert:
             raise RuntimeError("simulated index save failure")
 
@@ -35,6 +39,9 @@ class FakeIndexRegistry:
 
     def verify(self, partition, chunk_ids: list[str]) -> bool:
         return all(chunk_id in self.rows[partition.value] for chunk_id in chunk_ids)
+
+    def verify_absent(self, partition, chunk_ids: list[str]) -> bool:
+        return all(chunk_id not in self.rows[partition.value] for chunk_id in chunk_ids)
 
     def search(self, partition, query: str, limit: int = 5) -> list[dict]:
         self.search_calls.append(partition.value)

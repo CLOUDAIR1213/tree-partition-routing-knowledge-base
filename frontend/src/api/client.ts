@@ -1,14 +1,19 @@
 import type {
+  ChangeDocumentPartitionRequest,
+  ChangeDocumentPartitionResponse,
   ChatRequest,
   ChatResponse,
   ChunkPreviewResponse,
   DocumentDetailResponse,
   DocumentListResponse,
+  DeleteDocumentResponse,
   ErrorResponse,
   HealthResponse,
   ListDocumentsParams,
   Partition,
   PreviewParams,
+  ReopenDocumentReviewRequest,
+  ReopenDocumentReviewResponse,
   ReviewRequest,
   ReviewResponse,
   UploadDocumentInput,
@@ -126,6 +131,40 @@ function isSafeWebCitation(value: unknown) {
   }
 }
 
+function isElapsedMilliseconds(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isValidChatTiming(value: unknown, searchedPartitions: Partition[]) {
+  if (!value || typeof value !== "object") return false;
+  const timing = value as Record<string, unknown>;
+  if (
+    !Array.isArray(timing.retrieval) ||
+    !timing.retrieval.every((item) => {
+      if (!item || typeof item !== "object") return false;
+      const retrieval = item as Record<string, unknown>;
+      return (
+        typeof retrieval.partition === "string" &&
+        validPartitions.has(retrieval.partition as Partition) &&
+        isElapsedMilliseconds(retrieval.elapsed_ms)
+      );
+    })
+  ) {
+    return false;
+  }
+  const retrievalPartitions = timing.retrieval.map(
+    (item) => (item as { partition: Partition }).partition,
+  );
+  return (
+    retrievalPartitions.length === searchedPartitions.length &&
+    retrievalPartitions.every(
+      (partition, index) => partition === searchedPartitions[index],
+    ) &&
+    (timing.router_llm_ms === null || isElapsedMilliseconds(timing.router_llm_ms)) &&
+    (timing.answer_llm_ms === null || isElapsedMilliseconds(timing.answer_llm_ms))
+  );
+}
+
 function assertChatContract(response: ChatResponse): ChatResponse {
   const searchedPartitions = Array.isArray(response.searched_partitions)
     ? response.searched_partitions
@@ -166,7 +205,8 @@ function assertChatContract(response: ChatResponse): ChatResponse {
     !validRouteShape ||
     !validCitations ||
     !validWebCitations ||
-    !validSourceShape
+    !validSourceShape ||
+    !isValidChatTiming(response.timing, searchedPartitions)
   ) {
     throw new Error("后端返回了前端尚未支持的问答状态");
   }
@@ -209,6 +249,8 @@ export const documentsApi = {
     return apiFetch<DocumentListResponse>(
       `/api/v1/documents${queryString({
         status: params.status,
+        partition: params.partition,
+        q: params.q,
         limit: params.limit,
         offset: params.offset,
       })}`,
@@ -237,6 +279,36 @@ export const documentsApi = {
     return apiFetch<ReviewResponse>(
       `/api/v1/documents/${encodeURIComponent(documentId)}/review`,
       { method: "POST", body: JSON.stringify(input) },
+      120_000,
+    );
+  },
+
+  changePartition(
+    documentId: string,
+    input: ChangeDocumentPartitionRequest,
+  ): Promise<ChangeDocumentPartitionResponse> {
+    return apiFetch<ChangeDocumentPartitionResponse>(
+      `/api/v1/documents/${encodeURIComponent(documentId)}/partition`,
+      { method: "POST", body: JSON.stringify(input) },
+      120_000,
+    );
+  },
+
+  reopenReview(
+    documentId: string,
+    input: ReopenDocumentReviewRequest,
+  ): Promise<ReopenDocumentReviewResponse> {
+    return apiFetch<ReopenDocumentReviewResponse>(
+      `/api/v1/documents/${encodeURIComponent(documentId)}/reopen-review`,
+      { method: "POST", body: JSON.stringify(input) },
+      120_000,
+    );
+  },
+
+  delete(documentId: string): Promise<DeleteDocumentResponse> {
+    return apiFetch<DeleteDocumentResponse>(
+      `/api/v1/documents/${encodeURIComponent(documentId)}`,
+      { method: "DELETE" },
       120_000,
     );
   },

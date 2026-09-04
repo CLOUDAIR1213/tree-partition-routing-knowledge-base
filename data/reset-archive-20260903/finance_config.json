@@ -1,0 +1,19 @@
+{
+  "path": "BAAI/bge-small-zh-v1.5",
+  "content": true,
+  "dimensions": 512,
+  "backend": "faiss",
+  "offset": 33,
+  "build": {
+    "create": "2026-09-01T07:59:00Z",
+    "python": "3.11.9",
+    "settings": {
+      "components": "IDMap,Flat"
+    },
+    "system": "Windows (AMD64)",
+    "txtai": "9.13.0"
+  },
+  "update": "2026-09-02T09:28:50Z",
+  "format": "json",
+  "autoid": 6
+}

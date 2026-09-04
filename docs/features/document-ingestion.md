@@ -1,13 +1,13 @@
 # 文档接入
 
 > 文档状态：已实现  
-> 最近核对：2026-09-02  
+> 最近核对：2026-09-03
 > 代码基线：`61c551f` 加当前工作树快照  
 > 维护责任：待指定
 
 ## 1. 功能说明
 
-文档接入功能允许用户上传 PDF、DOCX、TXT 或 Markdown，选择初始知识分区和可选标题。后端校验文件、保存原文件、解析正文、生成稳定 Chunk，并把文档推进到 `pending_review`，等待人工确认最终分区。
+文档接入功能允许用户上传 PDF、DOCX、TXT 或 Markdown，选择初始知识分区和可选标题。未填写标题时，后端使用安全化原文件名去掉扩展名后的值作为文档与 Chunk 标题；文档章节标题只用于定位，不作为整份文档标题。后端校验文件、保存原文件、解析正文、生成稳定 Chunk、生成解析质量报告和内容分区建议，并把文档推进到 `pending_review`，等待人工确认最终分区。
 
 该阶段不会写入正式 txtai 索引，避免未经审核的内容进入问答。
 
@@ -15,19 +15,20 @@
 
 | 类型 | 内容 |
 | --- | --- |
-| 包含 | 单文件上传；前端预检；服务端扩展名和签名校验；重复内容检测；原文件保存；PDF/DOCX/TXT/Markdown 解析；Chunking；解析快照；待审核状态 |
+| 包含 | 单文件上传；前端预检；服务端扩展名和签名校验；重复内容检测；原文件保存；PDF/DOCX/TXT/Markdown 解析；Chunking；解析质量报告；关键词分区建议；解析快照；待审核状态 |
 | 不包含 | 批量上传；异步任务；OCR；扫描 PDF；Excel/PPTX/图片；病毒扫描；文档删除；自动入索引 |
 
 ## 3. 用户流程与状态
 
 1. 用户从聊天页进入 `/knowledge/upload`。
-2. 选择一个文件、初始分区和可选标题。
+2. 选择一个文件、初始分区和可选标题；未填写标题时，系统使用原文件名（不含扩展名）。
 3. 前端检查扩展名、非空和 25 MB 限制，然后提交 multipart。
 4. 后端重新读取并校验大小、扩展名、内容签名和 UTF-8 编码。
 5. 后端按内容 SHA-256 检查未拒绝、未失败的重复文档。
 6. 原文件保存后创建 `documents` 记录，状态从 `uploaded` 进入 `parsing`。
-7. Parser 生成 Section，Chunker 生成稳定 Chunk ID 和 Embedding 文本。
-8. Chunk 写入 SQLite，状态改为 `pending_review`，解析快照写入 staging。
+7. Parser 按文档原始顺序生成 Section，并记录页数、空白页和表格数量；Chunker 生成稳定 Chunk ID 和 Embedding 文本，且不得因尾部合并丢失正文。
+8. 服务计算章节、标题识别率、Chunk 长度、解析警告和非权威内容分区建议。
+9. Chunk 写入 SQLite，状态改为 `pending_review`，Section、Chunk ID 和质量报告写入 staging 快照。
 9. 前端跳转到审核页面。
 
 | 当前状态 | 操作或条件 | 下一状态 | 失败处理 |
@@ -55,13 +56,14 @@
 | 路径或服务 | 职责 | 上下游依赖 |
 | --- | --- | --- |
 | `app/api/documents.py` | multipart 入口和响应 | Settings、AsyncSession、IngestionService |
-| `app/services/ingestion.py` | 接入状态和事务编排 | FileStorage、Parser、Chunker、ORM |
+| `app/services/ingestion.py` | 接入状态、质量报告和快照编排 | FileStorage、Parser、Chunker、PartitionSuggester、ORM |
 | `app/services/file_storage.py` | 文件名清理、签名检查和保存 | raw/staging 目录 |
-| `app/services/parser.py` | 按格式解析 Section | pypdf、python-docx、文本解析 |
-| `app/services/chunker.py` | Token 近似切分和稳定 ID | Chunk 配置、SHA-256 |
+| `app/services/parser.py` | 按格式和 DOCX 原始块顺序解析 Section | pypdf、python-docx、文本解析 |
+| `app/services/chunker.py` | Token 近似切分、完整性保护和稳定 ID | Chunk 配置、SHA-256 |
+| `app/services/partition_suggestion.py` | 内容关键词分区建议 | 已解析正文、固定关键词表 |
 | `app/db/tables.py` | 文档和 Chunk 持久化 | SQLite |
 
-PDF 按页生成 Section；DOCX 按 Heading 层级并附加表格；Markdown 按标题层级且保留代码围栏；TXT 作为单 Section。Chunker 以中日韩字符、英文词和其他非空字符近似 Token，支持窗口重叠。
+PDF 按页生成 Section 并记录空白页；DOCX 按 Heading 层级读取段落和表格的原始交错顺序；Markdown 按标题层级且保留代码围栏；TXT 作为单 Section。Chunker 以中日韩字符、英文词和其他非空字符近似 Token；尾部短窗口不再覆盖前一 Chunk。关键词建议只提示审核人，不改变上传初选或最终入库分区。
 
 ## 6. 数据库与存储
 
@@ -70,7 +72,7 @@ PDF 按页生成 Section；DOCX 按 Heading 层级并附加表格；Markdown 按
 | SQLite | `documents` | 读写 | 重复检测、文件元数据和接入状态 |
 | SQLite | `chunk_candidates` | 写 | 完整 Chunk、Embedding 文本和定位信息 |
 | 文件 | `data/raw/<document_id>/` | 写 | 保存原文件 |
-| 文件 | `data/staging/<document_id>/parse.json` | 写 | 保存 Section 和 Chunk ID 快照 |
+| 文件 | `data/staging/<document_id>/parse.json` | 读写 | 保存 Section、Chunk ID、解析质量和内容建议快照 |
 | txtai | `data/indexes/*` | 无 | 接入阶段禁止写入 |
 
 接入包含多次 SQLite commit 和文件系统写入，不是原子事务。解析失败会把文档标记为 `failed`，但当前不会自动删除已保存的 raw/staging 目录。
@@ -81,7 +83,7 @@ PDF 按页生成 Section；DOCX 按 Heading 层级并附加表格；Markdown 按
 | --- | --- | --- | --- | --- | --- |
 | `POST` | `/api/v1/documents` | 上传、解析并生成 Chunk | multipart body | `UploadDocumentResponse` | `DUPLICATE_DOCUMENT`、`UNSUPPORTED_FILE_TYPE`、`FILE_TOO_LARGE`、`EMPTY_DOCUMENT`、`DOCUMENT_PARSE_FAILED`、`INVALID_PARTITION` |
 
-multipart 字段为 `file`、`partition` 和可选 `title`。成功返回 HTTP 201 和 `pending_review`。
+multipart 字段为 `file`、`partition` 和可选 `title`。成功返回 HTTP 201 和 `pending_review`，并返回 `parse_quality` 与同一报告中的 `warnings`；建议分区仅在 `parse_quality.partition_suggestion` 中出现。
 
 权威契约：`contracts/openapi.json`  
 契约生成命令：`uv run --no-sync python -m scripts.export_openapi`
@@ -96,6 +98,7 @@ multipart 字段为 `file`、`partition` 和可选 `title`。成功返回 HTTP 2
 | `app/services/file_storage.py` | 文件边界 | `owned` | 保持路径穿越和内容签名检查 |
 | `app/services/parser.py` | 解析 | `owned` | 新格式需增加依赖、测试和安全限制 |
 | `app/services/chunker.py` | Chunking | `owned` | 改算法时评估稳定 ID 和索引兼容性 |
+| `app/services/partition_suggestion.py` | 分区建议 | `owned` | 必须保持可解释、无外部模型调用且不自动入库 |
 | `app/api/documents.py` | 共享文档路由 | `shared` | 同时检查审核功能和 OpenAPI |
 | `app/db/tables.py`、`app/models/schemas.py` | 数据和 API 模型 | `shared` | 检查审核、聊天和前端生成类型 |
 | `app/core/config.py`、`.env.example` | 上传和 Chunk 配置 | `shared` | 同步前端提示和运行文档 |
@@ -111,6 +114,9 @@ multipart 字段为 `file`、`partition` 和可选 `title`。成功返回 HTTP 2
 - TXT 和 Markdown 只接受 UTF-8 兼容内容。
 - `document_id` 由服务端随机生成，文件保存在其独立目录。
 - 上传和解析完成后状态必须是 `pending_review`，不得直接 `ready`。
+- Chunk 切分不得删除任意可解析正文 Token；尾部短 Chunk 可以保留并由质量报告提示。
+- DOCX 表格必须按原文位置写入相邻章节，不能统一移到末尾。
+- `partition_suggestion` 只用于审核提示，不得写入 `selected_partition` 或替代 `confirmed_partition`。
 - API 不返回 `stored_path`、SHA-256 或 `embedding_text`。
 - 当前没有认证和上传权限控制，不得在共享环境接收真实企业文件。
 
@@ -130,18 +136,20 @@ multipart 字段为 `file`、`partition` 和可选 `title`。成功返回 HTTP 2
 
 | 层级 | 覆盖内容 | 文件或命令 |
 | --- | --- | --- |
-| 后端单元 | Markdown/DOCX/PDF 解析、稳定 Chunk、窗口边界 | `tests/unit/test_parser_and_chunker.py` |
-| 后端集成 | 四种格式、签名不匹配、重复、路径穿越 | `tests/integration/test_documents_api.py` |
+| 后端单元 | Markdown/DOCX/PDF 解析、DOCX 表格顺序、稳定 Chunk、窗口完整性 | `tests/unit/test_parser_and_chunker.py` |
+| 后端集成 | 四种格式、质量报告、建议分区、签名不匹配、重复、路径穿越 | `tests/integration/test_documents_api.py` |
 | 前端组件 | 非法文件、合法文件和分区后可提交 | `frontend/src/App.test.tsx` |
 | 前端 API | multipart boundary 和字段 | `frontend/src/api/client.test.ts` |
 
-2026-09-02：解析/Chunk 单元测试和文档接入相关集成测试通过；前端生产构建通过。没有向现有 `data/` 写入验证数据，也没有运行真实大文件或恶意压缩包测试。
+2026-09-03：Parser/Chunker 和文档 API 聚焦测试 21/21 通过；前端上传/API 测试 29/29 通过。没有向现有 `data/` 写入验证数据，也没有运行真实大文件或恶意压缩包测试。
 
 ## 12. 已知限制与后续计划
 
 - 上传、解析和 Chunking 在一个同步 HTTP 请求中执行。
 - 不支持 OCR、扫描 PDF、Excel、PPTX、图片和其他编码文本。
 - 前端文件类型和 25 MB 限制是硬编码，与后端环境配置可能不一致。
+- 建议分区是可解释的关键词评分，不是语义分类器；跨分区或关键词稀少文档会返回无建议或低置信度。
 - DOCX/PDF 没有独立的解压或解析资源预算，尚未针对压缩炸弹和复杂恶意文件加固。
 - 失败文档的 raw/staging 文件不会自动清理。
-- 没有文档删除、重新解析和后台任务状态 API。
+- 文档删除已由知识库管理功能提供；本接入功能仍没有重新解析和后台任务状态 API。
+- 修改默认标题规则不会回写已经入库的文档、Chunk 或 txtai 索引元数据；现有文档需删除后重新上传，或另行实现标题编辑与重建索引能力。

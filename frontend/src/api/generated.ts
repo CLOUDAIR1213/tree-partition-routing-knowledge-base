@@ -50,6 +50,24 @@ export interface paths {
         get: operations["get_document_api_v1_documents__document_id__get"];
         put?: never;
         post?: never;
+        /** Delete Document */
+        delete: operations["delete_document_api_v1_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/partition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Document Partition */
+        post: operations["change_document_partition_api_v1_documents__document_id__partition_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -67,6 +85,23 @@ export interface paths {
         get: operations["preview_document_api_v1_documents__document_id__preview_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/reopen-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen Document Review */
+        post: operations["reopen_document_review_api_v1_documents__document_id__reopen_review_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -124,6 +159,33 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** ChangeDocumentPartitionRequest */
+        ChangeDocumentPartitionRequest: {
+            confirmed_partition: components["schemas"]["Partition"];
+            /** Note */
+            note?: string | null;
+            /** Reviewer Name */
+            reviewer_name?: string | null;
+        };
+        /** ChangeDocumentPartitionResponse */
+        ChangeDocumentPartitionResponse: {
+            confirmed_partition: components["schemas"]["Partition"];
+            /** Document Id */
+            document_id: string;
+            previous_partition: components["schemas"]["Partition"];
+            /** Reindexed Chunk Count */
+            reindexed_chunk_count: number;
+            /** Request Id */
+            request_id: string;
+            /** Review Note */
+            review_note: string | null;
+            /**
+             * Reviewed At
+             * Format: date-time
+             */
+            reviewed_at: string;
+            status: components["schemas"]["DocumentStatus"];
+        };
         /** ChatRequest */
         ChatRequest: {
             /**
@@ -157,10 +219,20 @@ export interface components {
             searched_partitions: components["schemas"]["Partition"][];
             /** Suggested Partitions */
             suggested_partitions: components["schemas"]["Partition"][];
+            timing?: components["schemas"]["ChatTiming"];
             /** Warning */
             warning: string | null;
             /** Web Citations */
             web_citations: components["schemas"]["WebCitation"][];
+        };
+        /** ChatTiming */
+        ChatTiming: {
+            /** Answer Llm Ms */
+            answer_llm_ms: number | null;
+            /** Retrieval */
+            retrieval: components["schemas"]["PartitionTiming"][];
+            /** Router Llm Ms */
+            router_llm_ms: number | null;
         };
         /** ChunkPreviewItem */
         ChunkPreviewItem: {
@@ -176,6 +248,8 @@ export interface components {
             preview: string;
             /** Section Path */
             section_path: string | null;
+            /** Text */
+            text: string;
             /** Title */
             title: string | null;
         };
@@ -192,6 +266,7 @@ export interface components {
             limit: number;
             /** Offset */
             offset: number;
+            parse_quality?: components["schemas"]["ParseQualityReport"] | null;
             /** Request Id */
             request_id: string;
             selected_partition: components["schemas"]["Partition"];
@@ -222,6 +297,20 @@ export interface components {
          * @enum {string}
          */
         DecisionSource: "user_hint" | "llm" | "safety_fallback";
+        /** DeleteDocumentResponse */
+        DeleteDocumentResponse: {
+            /**
+             * Deleted
+             * @constant
+             */
+            deleted: true;
+            /** Document Id */
+            document_id: string;
+            /** Removed Chunk Count */
+            removed_chunk_count: number;
+            /** Request Id */
+            request_id: string;
+        };
         /** DocumentDetailResponse */
         DocumentDetailResponse: {
             /** Chunk Count */
@@ -242,6 +331,7 @@ export interface components {
             mime_type: string;
             /** Original Filename */
             original_filename: string;
+            parse_quality?: components["schemas"]["ParseQualityReport"] | null;
             /** Request Id */
             request_id: string;
             /** Review Note */
@@ -277,7 +367,7 @@ export interface components {
          * DocumentStatus
          * @enum {string}
          */
-        DocumentStatus: "uploaded" | "parsing" | "pending_review" | "indexing" | "ready" | "rejected" | "failed";
+        DocumentStatus: "uploaded" | "parsing" | "pending_review" | "indexing" | "reindexing" | "deleting" | "ready" | "rejected" | "failed";
         /** DocumentSummaryResponse */
         DocumentSummaryResponse: {
             /** Chunk Count */
@@ -364,11 +454,89 @@ export interface components {
              */
             tech: "ready" | "error";
         };
+        /** ParseQualityReport */
+        ParseQualityReport: {
+            /** Average Chunk Tokens */
+            average_chunk_tokens: number;
+            /** Blank Page Numbers */
+            blank_page_numbers: number[];
+            /** Chunk Count */
+            chunk_count: number;
+            /** Heading Recognition Rate */
+            heading_recognition_rate: number;
+            /** Max Chunk Tokens */
+            max_chunk_tokens: number;
+            /** Min Chunk Tokens */
+            min_chunk_tokens: number;
+            /** Near Limit Chunk Count */
+            near_limit_chunk_count: number;
+            /** Over Limit Chunk Count */
+            over_limit_chunk_count: number;
+            /** Page Count */
+            page_count: number;
+            partition_suggestion: components["schemas"]["PartitionSuggestion"];
+            /** Section Count */
+            section_count: number;
+            /** Short Chunk Count */
+            short_chunk_count: number;
+            /**
+             * Source Format
+             * @enum {string}
+             */
+            source_format: "pdf" | "docx" | "markdown" | "text";
+            /** Table Count */
+            table_count: number;
+            /** Titled Section Count */
+            titled_section_count: number;
+            /** Warnings */
+            warnings: string[];
+        };
         /**
          * Partition
          * @enum {string}
          */
         Partition: "finance" | "hr" | "tech";
+        /** PartitionSuggestion */
+        PartitionSuggestion: {
+            /** Confidence */
+            confidence: number;
+            partition: components["schemas"]["Partition"] | null;
+            /** Reasons */
+            reasons: string[];
+        };
+        /** PartitionTiming */
+        PartitionTiming: {
+            /** Elapsed Ms */
+            elapsed_ms: number;
+            partition: components["schemas"]["Partition"];
+        };
+        /** ReopenDocumentReviewRequest */
+        ReopenDocumentReviewRequest: {
+            /** Note */
+            note?: string | null;
+            /** Reviewer Name */
+            reviewer_name?: string | null;
+        };
+        /** ReopenDocumentReviewResponse */
+        ReopenDocumentReviewResponse: {
+            /** Confirmed Partition */
+            confirmed_partition: null;
+            /** Document Id */
+            document_id: string;
+            previous_partition: components["schemas"]["Partition"];
+            /** Removed Indexed Chunk Count */
+            removed_indexed_chunk_count: number;
+            /** Request Id */
+            request_id: string;
+            /** Review Note */
+            review_note: string | null;
+            /**
+             * Reviewed At
+             * Format: date-time
+             */
+            reviewed_at: string;
+            status: components["schemas"]["DocumentStatus"];
+        };
         /**
          * ReviewAction
          * @enum {string}
@@ -416,6 +584,7 @@ export interface components {
             document_id: string;
             /** Original Filename */
             original_filename: string;
+            parse_quality: components["schemas"]["ParseQualityReport"];
             /** Request Id */
             request_id: string;
             selected_partition: components["schemas"]["Partition"];
@@ -496,6 +665,8 @@ export interface operations {
         parameters: {
             query?: {
                 status?: components["schemas"]["DocumentStatus"] | null;
+                partition?: components["schemas"]["Partition"] | null;
+                q?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -679,6 +850,162 @@ export interface operations {
             };
         };
     };
+    delete_document_api_v1_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteDocumentResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    change_document_partition_api_v1_documents__document_id__partition_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeDocumentPartitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeDocumentPartitionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     preview_document_api_v1_documents__document_id__preview_get: {
         parameters: {
             query?: {
@@ -700,6 +1027,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChunkPreviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reopen_document_review_api_v1_documents__document_id__reopen_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReopenDocumentReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReopenDocumentReviewResponse"];
                 };
             };
             /** @description Not Found */

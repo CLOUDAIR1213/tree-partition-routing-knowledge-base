@@ -86,6 +86,11 @@ def test_partition_hint_searches_only_selected_index(client, fake_registry):
     assert fake_registry.search_calls == ["tech"]
     assert response.json()["answer_source"] == "none"
     assert response.json()["web_citations"] == []
+    timing = response.json()["timing"]
+    assert [item["partition"] for item in timing["retrieval"]] == ["tech"]
+    assert timing["retrieval"][0]["elapsed_ms"] >= 0
+    assert timing["router_llm_ms"] is None
+    assert timing["answer_llm_ms"] is None
 
 
 def test_zero_internal_evidence_uses_opted_in_web_fallback(client, fake_registry):
@@ -316,6 +321,14 @@ def test_composite_route_searches_two_partitions_and_groups_citations(
     ]
     assert fake_registry.search_calls == ["tech", "finance"]
     assert provider.calls == ["router-test", "answer-test"]
+    timing = payload["timing"]
+    assert [item["partition"] for item in timing["retrieval"]] == [
+        "tech",
+        "finance",
+    ]
+    assert all(item["elapsed_ms"] >= 0 for item in timing["retrieval"])
+    assert timing["router_llm_ms"] is not None
+    assert timing["answer_llm_ms"] is not None
 
 
 def test_router_clarify_does_not_search_any_partition(client, fake_registry):

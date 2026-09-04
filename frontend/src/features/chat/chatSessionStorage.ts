@@ -72,6 +72,26 @@ function isPartitionArray(value: unknown): value is Partition[] {
   return Array.isArray(value) && value.every(isPartition);
 }
 
+function isElapsedMilliseconds(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isChatTiming(value: unknown): value is NonNullable<ChatMessage["timing"]> {
+  if (!isRecord(value) || !Array.isArray(value.retrieval)) return false;
+  return (
+    value.retrieval.every(
+      (item) =>
+        isRecord(item) &&
+        isPartition(item.partition) &&
+        isElapsedMilliseconds(item.elapsed_ms),
+    ) &&
+    (value.router_llm_ms === null ||
+      isElapsedMilliseconds(value.router_llm_ms)) &&
+    (value.answer_llm_ms === null ||
+      isElapsedMilliseconds(value.answer_llm_ms))
+  );
+}
+
 function isChatMessage(value: unknown): value is ChatMessage {
   if (
     !isRecord(value) ||
@@ -97,7 +117,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
     (value.suggestedPartitions === undefined ||
       isPartitionArray(value.suggestedPartitions)) &&
     (value.requestId === undefined || typeof value.requestId === "string") &&
-    (value.warning === undefined || isNullableString(value.warning))
+    (value.warning === undefined || isNullableString(value.warning)) &&
+    (value.timing === undefined || isChatTiming(value.timing))
   );
 }
 
