@@ -1,3 +1,5 @@
+import logging
+from collections.abc import Collection
 from time import perf_counter
 
 from anyio import to_thread
@@ -13,11 +15,14 @@ from app.models.schemas import (
     RetrievalHit,
     RoutedSubquery,
 )
+from app.services.hierarchical_index import normalize_section
+
+logger = logging.getLogger(__name__)
 
 
 class Retriever:
-    def __init__(self, index_registry, min_score: float = 0) -> None:
-        self.index_registry = index_registry
+    def __init__(self, tree_index_registry, min_score: float = 0) -> None:
+        self.tree_index_registry = tree_index_registry
         self.min_score = min_score
 
     async def search(
@@ -26,10 +31,24 @@ class Retriever:
         partition: Partition,
         query: str,
         limit: int,
+        *,
+        section_constraints: Collection[tuple[str, str]] | None = None,
     ) -> list[RetrievalHit]:
+        normalized_constraints = (
+            frozenset(section_constraints)
+            if section_constraints is not None
+            else None
+        )
+        if normalized_constraints is not None and not normalized_constraints:
+            return []
         try:
             raw_hits = await to_thread.run_sync(
-                lambda: self.index_registry.search(partition, query, limit)
+                lambda: self.tree_index_registry.search_chunks(
+                    partition,
+                    query,
+                    limit,
+                    section_constraints=normalized_constraints,
+                )
             )
         except RuntimeError as exc:
             raise AppError(
@@ -41,7 +60,17 @@ class Retriever:
 
         ordered = [self._normalize_hit(hit) for hit in raw_hits]
         ordered = [hit for hit in ordered if hit is not None]
+        threshold_filtered_count = sum(
+            score < self.min_score for _chunk_id, score in ordered
+        )
+        top_score = max((score for _chunk_id, score in ordered), default=None)
         if not ordered:
+            logger.info(
+                "tree_retrieval_layer partition=%s level=chunk candidate_count=0 "
+                "max_score=None threshold_filtered_count=0 sqlite_rejected_count=0 "
+                "accepted_count=0",
+                partition.value,
+            )
             return []
 
         chunk_ids = [chunk_id for chunk_id, _score in ordered]
@@ -55,17 +84,26 @@ class Retriever:
         by_id = {chunk.id: (chunk, document) for chunk, document in records}
 
         results: list[RetrievalHit] = []
+        sqlite_rejected_count = 0
         for chunk_id, score in ordered:
             if score < self.min_score:
                 continue
             record = by_id.get(chunk_id)
             if record is None:
+                sqlite_rejected_count += 1
                 continue
             chunk, document = record
             if document.status != DocumentStatus.READY.value:
+                sqlite_rejected_count += 1
                 continue
             if document.confirmed_partition != partition.value:
                 raise PartitionIsolationError(partition.value)
+            if normalized_constraints is not None and (
+                document.id,
+                normalize_section(chunk.section_path),
+            ) not in normalized_constraints:
+                sqlite_rejected_count += 1
+                continue
             results.append(
                 RetrievalHit(
                     chunk_id=chunk.id,
@@ -79,6 +117,17 @@ class Retriever:
                     page_end=chunk.page_end,
                 )
             )
+        logger.info(
+            "tree_retrieval_layer partition=%s level=chunk candidate_count=%d "
+            "max_score=%s threshold_filtered_count=%d sqlite_rejected_count=%d "
+            "accepted_count=%d",
+            partition.value,
+            len(ordered),
+            None if top_score is None else round(top_score, 6),
+            threshold_filtered_count,
+            sqlite_rejected_count,
+            len(results),
+        )
         return results
 
     async def search_groups(

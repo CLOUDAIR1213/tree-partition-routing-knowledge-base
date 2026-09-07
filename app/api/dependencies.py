@@ -13,8 +13,8 @@ async def get_session(request: Request):
         yield session
 
 
-def get_index_registry(request: Request):
-    return request.app.state.index_registry
+def get_tree_index_registry(request: Request):
+    return request.app.state.tree_index_registry
 
 
 def get_llm_provider(request: Request):

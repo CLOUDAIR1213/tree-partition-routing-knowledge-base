@@ -18,7 +18,7 @@ from app.models.schemas import ErrorResponse
 def create_app(
     settings: Settings | None = None,
     *,
-    index_registry=None,
+    tree_index_registry=None,
     llm_provider=None,
     web_search_provider=None,
 ) -> FastAPI:
@@ -28,35 +28,47 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.ensure_directories()
         database = Database(settings.metadata_database_url)
-        await database.initialize()
-        if index_registry is None:
-            from app.services.index_registry import IndexRegistry
-
-            registry = IndexRegistry(settings.index_root, settings.embedding_model)
-        else:
-            registry = index_registry
-        registry.load_all()
-        if llm_provider is None:
-            from app.services.llm import build_llm_provider
-
-            provider = build_llm_provider(settings)
-        else:
-            provider = llm_provider
-        if web_search_provider is None:
-            from app.services.web_search import build_web_search_provider
-
-            search_provider = build_web_search_provider(settings)
-        else:
-            search_provider = web_search_provider
-        app.state.settings = settings
-        app.state.database = database
-        app.state.index_registry = registry
-        app.state.llm_provider = provider
-        app.state.web_search_provider = search_provider
+        registry = None
         try:
+            await database.initialize()
+            if tree_index_registry is None:
+                from app.services.hierarchical_index import HierarchicalIndexRegistry
+
+                registry = HierarchicalIndexRegistry(
+                    settings.hierarchical_index_root,
+                    settings.embedding_model,
+                )
+            else:
+                registry = tree_index_registry
+            registry.load_all()
+            registry.ensure_all_ready()
+            from app.services.hierarchy_builder import HierarchyIndexBuilder
+
+            async with database.session_factory() as hierarchy_session:
+                await HierarchyIndexBuilder(registry).sync_ready_documents(
+                    hierarchy_session
+                )
+            if llm_provider is None:
+                from app.services.llm import build_llm_provider
+
+                provider = build_llm_provider(settings)
+            else:
+                provider = llm_provider
+            if web_search_provider is None:
+                from app.services.web_search import build_web_search_provider
+
+                search_provider = build_web_search_provider(settings)
+            else:
+                search_provider = web_search_provider
+            app.state.settings = settings
+            app.state.database = database
+            app.state.tree_index_registry = registry
+            app.state.llm_provider = provider
+            app.state.web_search_provider = search_provider
             yield
         finally:
-            registry.close_all()
+            if registry is not None:
+                registry.close_all()
             await database.close()
 
     app = FastAPI(

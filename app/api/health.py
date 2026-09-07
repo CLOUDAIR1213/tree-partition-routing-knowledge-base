@@ -19,7 +19,7 @@ async def health(request: Request) -> HealthResponse:
             await session.execute(text("SELECT 1"))
     except Exception:  # noqa: BLE001
         database_status = "error"
-    indexes = request.app.state.index_registry.health()
+    indexes = request.app.state.tree_index_registry.health()
     settings = request.app.state.settings
     router_status = "configured" if settings.router_configured else "not_configured"
     answer_status = (
@@ -39,7 +39,12 @@ async def health(request: Request) -> HealthResponse:
     payload = HealthResponse(
         status=(
             "ok"
-            if database_status == "ok" and all(value == "ready" for value in indexes.values())
+            if database_status == "ok"
+            and all(
+                level_status == "ready"
+                for partition_status in indexes.values()
+                for level_status in partition_status.values()
+            )
             else "degraded"
         ),
         metadata_database=database_status,

@@ -48,6 +48,9 @@ class DocumentTable(Base):
     chunks: Mapped[list["ChunkCandidateTable"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
+    hierarchy_nodes: Mapped[list["HierarchyNodeTable"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
 
 
 class ChunkCandidateTable(Base):
@@ -72,3 +75,24 @@ class ChunkCandidateTable(Base):
 
     document: Mapped[DocumentTable] = relationship(back_populates="chunks")
 
+
+class HierarchyNodeTable(Base):
+    __tablename__ = "hierarchy_nodes"
+    __table_args__ = (
+        Index("ix_hierarchy_nodes_document_id", "document_id"),
+        Index("ix_hierarchy_nodes_partition_level", "partition", "level"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    parent_id: Mapped[str | None] = mapped_column(String(128))
+    level: Mapped[str] = mapped_column(String(20), nullable=False)
+    partition: Mapped[str] = mapped_column(String(20), nullable=False)
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    section_path: Mapped[str | None] = mapped_column(String(500))
+    retrieval_text: Mapped[str] = mapped_column(Text, nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    document: Mapped[DocumentTable] = relationship(back_populates="hierarchy_nodes")

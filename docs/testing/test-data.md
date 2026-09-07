@@ -269,7 +269,7 @@ D 负责人最后检查跨分区问题引用的 `document_id` 和 `section` 是�
 ## 9. 本项目的数据边界
 
 - 制作人员只提交 `data/fixtures`、`tests/fixtures` 下的源文件。
-- 不直接修改 `data/raw`、`data/staging`、`data/indexes` 或 `data/metadata`。
+- 不直接修改 `data/raw`、`data/staging`、`data/indexes-hierarchical`、`data/indexes` 或 `data/metadata`。
 - 不直接运行 `scripts/seed_demo_indexes.py`。
 - 不根据模型输出反向修改“标准答案”；预期结果以文档事实和路由规则为准。
 - 不要求对回答措辞逐字匹配，只标注必须覆盖的事实点和允许引用的证据位置。

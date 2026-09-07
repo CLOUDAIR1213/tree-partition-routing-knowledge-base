@@ -1,6 +1,6 @@
 # 三分区知识库
 
-本地运行的企业知识库 MVP。系统把 PDF、DOCX、TXT 和 Markdown 文档解析为 Chunk，经人工确认最终分区后写入财务、人事或技术 txtai 索引，并支持手动单分区或 LLM 自动单/双分区证据问答。
+本地运行的企业知识库 MVP。系统把 PDF、DOCX、TXT 和 Markdown 文档解析为 Chunk，经人工确认最终分区后写入财务、人事或技术的 `document -> section -> chunk` 三层 txtai 树索，并支持手动单分区或 LLM 自动单/双分区证据问答。
 
 ## 开发前先读文档
 
@@ -8,7 +8,7 @@
 
 | 要修改的能力 | 首要文档 |
 | --- | --- |
-| 聊天、路由、检索、LLM、引用 | [`docs/features/chat-and-routing.md`](docs/features/chat-and-routing.md) |
+| 聊天、路由、检索、LLM、引用 | [`docs/features/chat-and-routing.md`](docs/features/chat-and-routing.md)、[`docs/features/tree-index-retrieval.md`](docs/features/tree-index-retrieval.md) |
 | 上传、解析、Chunking | [`docs/features/document-ingestion.md`](docs/features/document-ingestion.md) |
 | 预览、审核、索引写入 | [`docs/features/document-review-indexing.md`](docs/features/document-review-indexing.md) |
 | 启动、健康、错误、Request ID | [`docs/features/system-runtime.md`](docs/features/system-runtime.md) |
@@ -19,14 +19,14 @@
 
 - 文档内容与签名校验、重复检测、正文解析和可配置 Chunking。
 - 文档详情、分页 Chunk 预览、批准/拒绝和唯一最终分区。
-- 三个物理独立的 txtai 索引，以及 SQLite `ready + confirmed_partition` 二次校验。
+- 三个分区各自独立的 document、section、chunk 树索，以及 SQLite `ready + confirmed_partition` 二次校验。
 - 本地敏感输入阻断和邮箱、手机号、私网 IP 脱敏。
 - 用户手动单分区路由优先。
 - Router LLM 自动 single/composite/clarify，复合路由最多两个分区。
 - Answer LLM 证据回答、Citation 白名单和抽取式降级。
 - 统一错误体、Request ID、健康检查和 OpenAPI 生成契约。
 
-当前没有认证、审核授权、多租户、异步任务、OCR、删除/重试 API 或生产级可观测性，只适合可信本地演示环境。
+当前没有认证、审核授权、多租户、异步任务、OCR、通用失败重试 API 或生产级可观测性，只适合可信本地演示环境。tree-only 代码已完成，但真实业务数据迁移和旧 Flat 运行数据清理仍需按迁移文档在停服、备份和观察期条件下执行。
 
 ## 快速启动
 
@@ -44,7 +44,7 @@ npm install
 启动后端：
 
 ```powershell
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir app
 ```
 
 启动前端：
@@ -56,10 +56,10 @@ npm run dev
 
 | 服务 | 地址 |
 | --- | --- |
-| 前端 | `http://127.0.0.1:5173` |
-| Swagger | `http://127.0.0.1:8000/docs` |
-| OpenAPI | `http://127.0.0.1:8000/openapi.json` |
-| 健康检查 | `http://127.0.0.1:8000/api/v1/health` |
+| 树状版本前端 | `http://127.0.0.1:5174` |
+| Swagger | `http://127.0.0.1:8001/docs` |
+| OpenAPI | `http://127.0.0.1:8001/openapi.json` |
+| 健康检查 | `http://127.0.0.1:8001/api/v1/health` |
 
 配置、模型 API、前端代理和故障排查见 [`docs/operations/local-development.md`](docs/operations/local-development.md)。不要提交 `.env` 或把真实密钥写入文档。
 

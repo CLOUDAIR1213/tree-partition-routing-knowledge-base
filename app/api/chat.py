@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
-    get_index_registry,
     get_llm_provider,
     get_session,
+    get_tree_index_registry,
     get_web_search_provider,
 )
 from app.models.schemas import ChatRequest, ChatResponse, ErrorResponse
@@ -16,7 +16,7 @@ from app.services.routing import LLMRouter
 
 router = APIRouter(tags=["chat"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-IndexRegistryDep = Annotated[object, Depends(get_index_registry)]
+TreeIndexRegistryDep = Annotated[object, Depends(get_tree_index_registry)]
 LLMProviderDep = Annotated[object | None, Depends(get_llm_provider)]
 WebSearchProviderDep = Annotated[object | None, Depends(get_web_search_provider)]
 
@@ -34,7 +34,7 @@ async def chat(
     request: Request,
     payload: ChatRequest,
     session: SessionDep,
-    index_registry: IndexRegistryDep,
+    tree_index_registry: TreeIndexRegistryDep,
     llm_provider: LLMProviderDep,
     web_search_provider: WebSearchProviderDep,
 ) -> ChatResponse:
@@ -61,7 +61,10 @@ async def chat(
         else None
     )
     service = ChatService(
-        index_registry=index_registry,
+        tree_index_registry=tree_index_registry,
+        hierarchical_document_beam_width=settings.hierarchical_document_beam_width,
+        hierarchical_section_beam_width=settings.hierarchical_section_beam_width,
+        hierarchical_leaf_candidate_limit=settings.hierarchical_leaf_candidate_limit,
         retrieval_top_k=settings.retrieval_top_k,
         retrieval_min_score=settings.retrieval_min_score,
         composite_top_k=settings.composite_top_k_per_partition,

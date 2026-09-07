@@ -1,8 +1,8 @@
 # 项目文档导航
 
 > 文档状态：现行  
-> 最近核对：2026-09-03
-> 代码基线：`61c551f` 加当前工作树快照
+> 最近核对：2026-09-07
+> 代码基线：工作树快照（本目录不是 Git 仓库）
 
 本目录是开发者和编码 Agent 理解项目的首要入口。开始修改代码前，先按本页确定阅读范围，再检查对应代码；不要从归档规格或单个文件名猜测当前行为。
 
@@ -22,13 +22,13 @@
 
 | 任务 | 必读功能文档 | 同时阅读 |
 | --- | --- | --- |
-| 聊天、路由、检索、LLM、引用 | [聊天与分区路由](features/chat-and-routing.md) | [数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md)、[测试策略](testing/strategy.md) |
+| 聊天、路由、检索、LLM、引用 | [聊天与分区路由](features/chat-and-routing.md)、[树状索引检索](features/tree-index-retrieval.md) | [Tree-only 索引迁移](features/tree-only-index-migration.md)、[数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md)、[测试策略](testing/strategy.md) |
 | 上传、格式校验、解析、Chunking | [文档接入](features/document-ingestion.md) | [数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md) |
 | 预览、审核、批准、拒绝、索引写入 | [文档审核与索引](features/document-review-indexing.md) | [数据与存储](architecture/data-and-storage.md)、[测试策略](testing/strategy.md) |
 | 知识库目录、文档详情、筛选、Chunk 顺序展示 | [知识库目录与文档详情](features/knowledge-library-browser.md) | [文档接入](features/document-ingestion.md)、[文档审核与索引](features/document-review-indexing.md)、[数据与存储](architecture/data-and-storage.md)、[API 契约](contracts/api-conventions.md) |
 | 真实仿真知识内容、人工上传包、演示数据替换规划 | [真实仿真知识内容构建与人工入库](features/realistic-knowledge-content.md) | [文档接入](features/document-ingestion.md)、[文档审核与索引](features/document-review-indexing.md)、[数据与存储](architecture/data-and-storage.md)、[测试数据规范](testing/test-data.md) |
 | 健康检查、错误响应、Request ID、应用启动 | [系统运行时](features/system-runtime.md) | [本地开发](operations/local-development.md)、[API 契约](contracts/api-conventions.md) |
-| 数据库、文件目录、txtai 索引 | 受影响的全部功能文档 | [数据与存储](architecture/data-and-storage.md) |
+| 数据库、文件目录、txtai 索引 | 受影响的全部功能文档、[树状索引检索](features/tree-index-retrieval.md)（节点索引） | [数据与存储](architecture/data-and-storage.md) |
 | OpenAPI、前端生成类型、API Client | 受影响的全部功能文档 | [API 契约](contracts/api-conventions.md) |
 | 测试、Fixture、代码健康检查 | 对应功能文档 | [测试策略](testing/strategy.md)、[测试数据规范](testing/test-data.md) |
 | 启动、环境变量、联调 | [系统运行时](features/system-runtime.md) | [本地开发](operations/local-development.md) |
@@ -43,6 +43,8 @@
 ### 功能
 
 - [聊天与分区路由](features/chat-and-routing.md)：手动路由、自动单/双分区路由、检索、回答和引用。
+- [树状索引检索](features/tree-index-retrieval.md)：分区内文档 -> 章节 -> Chunk 的持久化树索引与生命周期同步。
+- [Tree-only 索引迁移](features/tree-only-index-migration.md)：已完成代码实施，以及待执行的真实数据迁移、Flat 数据清理与验收门槛。
 - [文档接入](features/document-ingestion.md)：上传、文件安全校验、解析和 Chunking。
 - [文档审核与索引](features/document-review-indexing.md)：详情、预览、审核状态和索引写入补偿。
 - [知识库目录与文档详情](features/knowledge-library-browser.md)：目录筛选、全状态详情、Chunk 原始顺序展示、审核入口和文档删除/分区管理。
@@ -58,11 +60,7 @@
 
 ### 项目汇报
 
-- [项目理解与汇报报告](project-report.md)：项目定位、逐界面与模块边界、复用接口、业务流程、存储底座、API 数据传递、运行方式与当前风险。
-
-### 优化计划（尚未实施）
-
-- [树状路由索引优化与实施方案](plans/tree-routing-index-optimization.md)：2026-09-07 代码审查基线、检索缺陷、诊断方案、树模型、逐层路由、迁移回滚、阶段任务与验收标准；不代表现有功能已完成树化。
+- [项目理解与汇报报告](project-report.md)：项目定位、业务流程、存储底座、API 数据传递、运行边界与当前风险。
 
 ## 事实来源
 
@@ -76,7 +74,7 @@
 
 ## 当前基线说明
 
-2026-09-02 核对时，复合路由、本地会话管理和受限联网兜底相关代码、契约、前端和测试均位于未提交工作树中，因此功能文档使用“工作树快照”作为基线。OpenAPI 快照与当前 FastAPI Schema 一致；此前后端 32 个测试、Ruff、前端构建和 22 个前端测试通过，本轮低分过滤与搜索错误分类的定向测试 18/18 通过。真实模型已完成一条单分区和一条双分区只读冒烟；真实 Tavily 请求返回 HTTP 401，需更换有效 Tavily Key 后才能形成网页回答成功冒烟。现有 fixture 不能用于认定业务回答质量通过，详见[测试策略](testing/strategy.md)。
+2026-09-07 tree-only 代码、离线迁移工具、健康契约和前端生成类型均位于非 Git 工作树快照中。当前后端 73 项通过、1 项真实服务测试跳过，前端 39/39、Python compileall、Ruff 和生产构建通过；审批超时后的状态回查、`indexing` 轮询和重复提交防护已纳入前端回归。`npm run api:check` 的最终 `git diff` 因本目录不是 Git 仓库不可用。所有新增验证使用临时 SQLite/Fake，未修改运行期业务数据或索引。
 
 ## 文档维护规则
 

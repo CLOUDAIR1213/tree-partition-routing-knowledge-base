@@ -8,7 +8,8 @@ from app.core.config import get_settings
 from app.db.session import Database
 from app.db.tables import ChunkCandidateTable, DocumentTable
 from app.models.enums import DocumentStatus, Partition
-from app.services.index_registry import IndexRegistry
+from app.services.hierarchical_index import HierarchicalIndexRegistry
+from app.services.hierarchy_builder import HierarchyIndexBuilder
 
 
 def load_fixtures(root: Path, partition: Partition) -> list[dict]:
@@ -24,13 +25,15 @@ async def seed() -> None:
     settings.ensure_directories()
     database = Database(settings.metadata_database_url)
     await database.initialize()
-    registry = IndexRegistry(settings.index_root, settings.embedding_model)
+    registry = HierarchicalIndexRegistry(
+        settings.hierarchical_index_root,
+        settings.embedding_model,
+    )
     registry.load_all()
     now = datetime.now(UTC)
     try:
         async with database.session_factory() as session:
             for partition in Partition:
-                index_rows: list[dict] = []
                 for fixture in load_fixtures(settings.fixture_root, partition):
                     document_id = fixture["document_id"]
                     document = await session.get(DocumentTable, document_id)
@@ -73,21 +76,9 @@ async def seed() -> None:
                                     indexed_at=now,
                                 )
                             )
-                        index_rows.append(
-                            {
-                                "id": chunk_id,
-                                "text": embedding_text,
-                                "document_id": document_id,
-                                "partition": partition.value,
-                                "title": fixture["title"],
-                                "section": item["section"],
-                                "page_start": None,
-                                "page_end": None,
-                            }
-                        )
-                registry.upsert_and_save(partition, index_rows)
-                print(f"{partition.value}: seeded {len(index_rows)} chunks")
             await session.commit()
+            await HierarchyIndexBuilder(registry).sync_ready_documents(session)
+            print("seeded document, section and chunk tree indexes")
     finally:
         registry.close_all()
         await database.close()

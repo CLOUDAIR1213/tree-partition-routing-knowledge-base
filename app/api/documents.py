@@ -16,7 +16,7 @@ from fastapi import (
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_index_registry, get_session
+from app.api.dependencies import get_session, get_tree_index_registry
 from app.core.errors import AppError
 from app.db.tables import ChunkCandidateTable, DocumentTable
 from app.models.enums import DocumentStatus, Partition
@@ -45,7 +45,7 @@ from app.services.review import ReviewService
 router = APIRouter(prefix="/documents", tags=["documents"])
 DocumentId = Annotated[str, Path(pattern=r"^doc_[0-9a-f]{24}$")]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-IndexRegistryDep = Annotated[object, Depends(get_index_registry)]
+TreeIndexRegistryDep = Annotated[object, Depends(get_tree_index_registry)]
 
 
 def _utc(value):
@@ -288,9 +288,11 @@ async def review_document(
     document_id: DocumentId,
     payload: ReviewRequest,
     session: SessionDep,
-    index_registry: IndexRegistryDep,
+    tree_index_registry: TreeIndexRegistryDep,
 ) -> ReviewResponse:
-    document, indexed_count = await ReviewService(index_registry).review(
+    document, indexed_count = await ReviewService(
+        tree_index_registry,
+    ).review(
         session, document_id, payload
     )
     return ReviewResponse(
@@ -317,10 +319,10 @@ async def change_document_partition(
     document_id: DocumentId,
     payload: ChangeDocumentPartitionRequest,
     session: SessionDep,
-    index_registry: IndexRegistryDep,
+    tree_index_registry: TreeIndexRegistryDep,
 ) -> ChangeDocumentPartitionResponse:
     service = DocumentManagementService(
-        index_registry,
+        tree_index_registry,
         _file_storage(request.app.state.settings),
     )
     document, previous_partition, reindexed_count = await service.change_partition(
@@ -350,10 +352,10 @@ async def reopen_document_review(
     document_id: DocumentId,
     payload: ReopenDocumentReviewRequest,
     session: SessionDep,
-    index_registry: IndexRegistryDep,
+    tree_index_registry: TreeIndexRegistryDep,
 ) -> ReopenDocumentReviewResponse:
     service = DocumentManagementService(
-        index_registry,
+        tree_index_registry,
         _file_storage(request.app.state.settings),
     )
     document, previous_partition, removed_count = await service.reopen_review(
@@ -382,10 +384,10 @@ async def delete_document(
     request: Request,
     document_id: DocumentId,
     session: SessionDep,
-    index_registry: IndexRegistryDep,
+    tree_index_registry: TreeIndexRegistryDep,
 ) -> DeleteDocumentResponse:
     service = DocumentManagementService(
-        index_registry,
+        tree_index_registry,
         _file_storage(request.app.state.settings),
     )
     removed_count = await service.delete_document(session, document_id)

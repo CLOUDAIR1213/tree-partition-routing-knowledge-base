@@ -22,9 +22,9 @@ from app.models.schemas import (
     WebCitation,
 )
 from app.services.answering import LLMAnswerer, LLMWebAnswerer
+from app.services.hierarchical_retriever import HierarchicalRetriever
 from app.services.input_safety import InputSafetyGuard
 from app.services.llm import LLMOutputError, LLMProviderError
-from app.services.retriever import Retriever
 from app.services.routing import LLMRouter
 from app.services.web_search import (
     WebSearchProvider,
@@ -36,10 +36,13 @@ from app.services.web_search import (
 class ChatService:
     def __init__(
         self,
-        index_registry,
+        tree_index_registry,
         retrieval_top_k: int,
         retrieval_min_score: float,
         composite_top_k: int,
+        hierarchical_document_beam_width: int = 3,
+        hierarchical_section_beam_width: int = 2,
+        hierarchical_leaf_candidate_limit: int = 100,
         router: LLMRouter | None = None,
         answerer: LLMAnswerer | None = None,
         web_search_provider: WebSearchProvider | None = None,
@@ -48,7 +51,13 @@ class ChatService:
         answer_mode: str = "llm",
     ) -> None:
         self.safety = InputSafetyGuard()
-        self.retriever = Retriever(index_registry, retrieval_min_score)
+        self.retriever = HierarchicalRetriever(
+            tree_index_registry=tree_index_registry,
+            min_score=retrieval_min_score,
+            document_beam_width=hierarchical_document_beam_width,
+            section_beam_width=hierarchical_section_beam_width,
+            leaf_candidate_limit=hierarchical_leaf_candidate_limit,
+        )
         self.retrieval_top_k = retrieval_top_k
         self.composite_top_k = composite_top_k
         self.router = router

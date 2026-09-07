@@ -11,13 +11,15 @@ from app.models.schemas import (
     ChangeDocumentPartitionRequest,
     ReopenDocumentReviewRequest,
 )
+from app.services.hierarchy_builder import HierarchyIndexBuilder
 from app.services.ingestion import get_document_or_404
 
 
 class DocumentManagementService:
-    def __init__(self, index_registry, file_storage) -> None:
-        self.index_registry = index_registry
+    def __init__(self, tree_index_registry, file_storage) -> None:
+        self.tree_index_registry = tree_index_registry
         self.file_storage = file_storage
+        self.hierarchy_builder = HierarchyIndexBuilder(tree_index_registry)
 
     async def delete_document(
         self,
@@ -36,6 +38,7 @@ class DocumentManagementService:
 
         chunks = await self._chunks(session, document_id)
         chunk_ids = [chunk.id for chunk in chunks]
+        hierarchy_nodes = await self._nodes_for_document(session, document, chunks)
         await self._claim(
             session,
             document_id,
@@ -44,7 +47,7 @@ class DocumentManagementService:
         )
 
         try:
-            await self._clear_indexes(chunk_ids)
+            await self._clear_indexes(chunk_ids, hierarchy_nodes)
         except Exception as exc:
             await self._mark_failed(
                 session,
@@ -60,10 +63,7 @@ class DocumentManagementService:
             ) from exc
 
         try:
-            await to_thread.run_sync(
-                self.file_storage.remove_document,
-                document_id,
-            )
+            await to_thread.run_sync(self.file_storage.remove_document, document_id)
             removed = await session.execute(
                 delete(DocumentTable).where(
                     DocumentTable.id == document_id,
@@ -118,6 +118,10 @@ class DocumentManagementService:
         if not chunks:
             raise AppError("PREVIEW_NOT_READY", "文档尚未产生可索引 Chunk", 409)
         rows = self._index_rows(document, chunks)
+        previous_nodes = await self._nodes_for_document(
+            session, document, chunks, previous_partition
+        )
+        target_nodes = self._tree_nodes(document, chunks, request.confirmed_partition)
         old_review = (
             document.reviewed_by,
             document.review_note,
@@ -135,6 +139,7 @@ class DocumentManagementService:
             await self._make_authoritative(
                 request.confirmed_partition,
                 rows,
+                target_nodes,
             )
             indexed_at = datetime.now(UTC)
             await session.execute(
@@ -142,6 +147,13 @@ class DocumentManagementService:
                 .where(ChunkCandidateTable.document_id == document_id)
                 .values(indexed_at=indexed_at)
             )
+            if target_nodes:
+                await self.hierarchy_builder.replace_persisted_nodes(
+                    session,
+                    document_id,
+                    target_nodes,
+                    indexed_at=indexed_at,
+                )
             updated = await session.execute(
                 update(DocumentTable)
                 .where(
@@ -163,7 +175,11 @@ class DocumentManagementService:
             await session.commit()
         except Exception as exc:
             await session.rollback()
-            compensation = await self._restore_partition(previous_partition, rows)
+            compensation = await self._restore_partition(
+                previous_partition,
+                rows,
+                previous_nodes,
+            )
             if compensation:
                 await session.execute(
                     update(DocumentTable)
@@ -226,6 +242,9 @@ class DocumentManagementService:
         if not chunks:
             raise AppError("PREVIEW_NOT_READY", "文档尚未产生可审核 Chunk", 409)
         rows = self._index_rows(document, chunks)
+        hierarchy_nodes = await self._nodes_for_document(
+            session, document, chunks, previous_partition
+        )
         old_review = (
             document.reviewed_by,
             document.review_note,
@@ -240,12 +259,14 @@ class DocumentManagementService:
 
         reviewed_at = datetime.now(UTC)
         try:
-            await self._clear_indexes([chunk.id for chunk in chunks])
+            await self._clear_indexes([chunk.id for chunk in chunks], hierarchy_nodes)
             await session.execute(
                 update(ChunkCandidateTable)
                 .where(ChunkCandidateTable.document_id == document_id)
                 .values(indexed_at=None)
             )
+            if hierarchy_nodes:
+                await self.hierarchy_builder.remove_persisted_nodes(session, document_id)
             updated = await session.execute(
                 update(DocumentTable)
                 .where(
@@ -267,7 +288,11 @@ class DocumentManagementService:
             await session.commit()
         except Exception as exc:
             await session.rollback()
-            compensation = await self._restore_partition(previous_partition, rows)
+            compensation = await self._restore_partition(
+                previous_partition,
+                rows,
+                hierarchy_nodes,
+            )
             if compensation:
                 await session.execute(
                     update(DocumentTable)
@@ -348,81 +373,164 @@ class DocumentManagementService:
             ).all()
         )
 
-    @staticmethod
+    async def _nodes_for_document(
+        self,
+        session: AsyncSession,
+        document: DocumentTable,
+        chunks: list[ChunkCandidateTable],
+        partition: Partition | None = None,
+    ) -> list:
+        resolved_partition = partition or (
+            Partition(document.confirmed_partition)
+            if document.confirmed_partition is not None
+            else None
+        )
+        if resolved_partition is None:
+            return []
+        persisted = await self.hierarchy_builder.persisted_nodes_for_document(
+            session, document.id
+        )
+        if persisted and all(node.partition == resolved_partition for node in persisted):
+            return persisted
+        return self.hierarchy_builder.nodes_for_document(
+            document, chunks, resolved_partition
+        )
+
+    def _tree_nodes(
+        self,
+        document: DocumentTable,
+        chunks: list[ChunkCandidateTable],
+        partition: Partition,
+    ) -> list:
+        return self.hierarchy_builder.nodes_for_document(document, chunks, partition)
+
     def _index_rows(
+        self,
         document: DocumentTable,
         chunks: list[ChunkCandidateTable],
     ) -> list[dict]:
-        return [
-            {
-                "id": chunk.id,
-                "text": chunk.embedding_text,
-                "document_id": document.id,
-                "title": chunk.title or document.title or document.original_filename,
-                "section": chunk.section_path,
-                "page_start": chunk.page_start,
-                "page_end": chunk.page_end,
-            }
-            for chunk in chunks
-        ]
+        partition = Partition(document.confirmed_partition)
+        return self.hierarchy_builder.chunk_rows_for_document(
+            document, chunks, partition
+        )
 
     async def _make_authoritative(
         self,
         partition: Partition,
         rows: list[dict],
+        hierarchy_nodes: list,
     ) -> None:
         partition_rows = [dict(row, partition=partition.value) for row in rows]
         chunk_ids = [row["id"] for row in rows]
         await to_thread.run_sync(
-            self.index_registry.upsert_and_save,
+            self.tree_index_registry.upsert_chunks_and_save,
             partition,
             partition_rows,
         )
         verified = await to_thread.run_sync(
-            self.index_registry.verify,
+            self.tree_index_registry.verify_chunks,
             partition,
             chunk_ids,
         )
         if not verified:
-            raise RuntimeError("target index verification failed")
+            raise RuntimeError("target chunk index verification failed")
+        await self._upsert_hierarchy(hierarchy_nodes)
         for other in Partition:
             if other == partition:
                 continue
             await to_thread.run_sync(
-                self.index_registry.delete_and_save,
+                self.tree_index_registry.delete_chunks_and_save,
                 other,
                 chunk_ids,
             )
             absent = await to_thread.run_sync(
-                self.index_registry.verify_absent,
+                self.tree_index_registry.verify_chunks_absent,
                 other,
                 chunk_ids,
             )
             if not absent:
-                raise RuntimeError("old index cleanup verification failed")
+                raise RuntimeError("old chunk index cleanup verification failed")
+        await self._clear_hierarchy_from_other_partitions(partition, hierarchy_nodes)
 
-    async def _clear_indexes(self, chunk_ids: list[str]) -> None:
+    async def _clear_indexes(self, chunk_ids: list[str], hierarchy_nodes: list) -> None:
         for partition in Partition:
             await to_thread.run_sync(
-                self.index_registry.delete_and_save,
+                self.tree_index_registry.delete_chunks_and_save,
                 partition,
                 chunk_ids,
             )
             absent = await to_thread.run_sync(
-                self.index_registry.verify_absent,
+                self.tree_index_registry.verify_chunks_absent,
                 partition,
                 chunk_ids,
             )
             if not absent:
-                raise RuntimeError("index cleanup verification failed")
+                raise RuntimeError("chunk index cleanup verification failed")
+        await self._clear_hierarchy_from_all_partitions(hierarchy_nodes)
+
+    async def _upsert_hierarchy(self, nodes: list) -> None:
+        if not nodes:
+            return
+        for level, level_nodes in self.hierarchy_builder.by_level(nodes).items():
+            partition = level_nodes[0].partition
+            node_ids = [node.id for node in level_nodes]
+            await to_thread.run_sync(
+                self.tree_index_registry.upsert_and_save,
+                partition,
+                level,
+                level_nodes,
+            )
+            verified = await to_thread.run_sync(
+                self.tree_index_registry.verify,
+                partition,
+                level,
+                node_ids,
+            )
+            if not verified:
+                raise RuntimeError("target hierarchy index verification failed")
+
+    async def _clear_hierarchy_from_other_partitions(
+        self,
+        target: Partition,
+        nodes: list,
+    ) -> None:
+        if not nodes:
+            return
+        for partition in Partition:
+            if partition == target:
+                continue
+            await self._delete_hierarchy(partition, nodes)
+
+    async def _clear_hierarchy_from_all_partitions(self, nodes: list) -> None:
+        for partition in Partition:
+            await self._delete_hierarchy(partition, nodes)
+
+    async def _delete_hierarchy(self, partition: Partition, nodes: list) -> None:
+        for level, level_nodes in self.hierarchy_builder.by_level(nodes).items():
+            node_ids = [node.id for node in level_nodes]
+            await to_thread.run_sync(
+                self.tree_index_registry.delete_and_save,
+                partition,
+                level,
+                node_ids,
+            )
+            absent = await to_thread.run_sync(
+                self.tree_index_registry.verify_absent,
+                partition,
+                level,
+                node_ids,
+            )
+            if not absent:
+                raise RuntimeError("hierarchy index cleanup verification failed")
 
     async def _restore_partition(
         self,
         partition: Partition,
         rows: list[dict],
+        hierarchy_nodes: list,
     ) -> bool:
         try:
-            await self._make_authoritative(partition, rows)
+            await self._make_authoritative(partition, rows, hierarchy_nodes)
         except Exception:  # noqa: BLE001
             return False
         return True

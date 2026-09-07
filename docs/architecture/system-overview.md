@@ -1,6 +1,6 @@
 # 系统总览
 
-> 最近核对：2026-09-03
+> 最近核对：2026-09-04
 > 代码基线：`61c551f` 加当前工作树快照
 
 ## 1. 系统目标
@@ -17,7 +17,7 @@
 | HTTP API | FastAPI、Pydantic | `app/main.py`、`app/api/` |
 | 业务服务 | Python async 服务层 | `app/services/` |
 | 元数据 | SQLAlchemy Async、SQLite、aiosqlite | `app/db/` |
-| 检索索引 | 三个独立 txtai Embeddings 实例 | `app/services/index_registry.py` |
+| 检索索引 | 三分区各自独立的 document、section、chunk 持久化树索 | `app/services/hierarchical_index.py` |
 | 外部模型 | OpenAI-compatible Chat Completions | `app/services/llm.py` |
 | API 契约 | FastAPI OpenAPI、openapi-typescript | `contracts/openapi.json`、`frontend/src/api/generated.ts` |
 
@@ -34,6 +34,7 @@ Browser
        -> SQLite metadata and Chunk text
        -> raw/staging files
        -> one or two partition-specific txtai indexes
+       -> optional partition root -> document -> section -> chunk tree retrieval
        -> optional OpenAI-compatible Router/Answer model
   -> Pydantic response + X-Request-ID
   -> React state and UI
@@ -66,8 +67,9 @@ Browser
 | `app/services/review.py` | 审核和索引写入编排 |
 | `app/services/document_management.py` | 文档删除、改分区和重新审核的跨存储编排 |
 | `app/services/chat.py` | 安全、路由、检索、回答和降级编排 |
-| `app/services/retriever.py` | txtai 召回后使用 SQLite 校验 Chunk 和分区 |
-| `app/services/index_registry.py` | 三个独立索引的加载、查询、写入和保存 |
+| `app/services/retriever.py` | 透传树索 Chunk 范围，并用 SQLite 校验 Chunk、分区和范围 |
+| `app/services/hierarchical_index.py` | 三分区 document/section/chunk 独立索引及参数化 metadata 范围 |
+| `app/services/hierarchical_retriever.py` | 文档/章节 Beam Search、范围传递、叶子约束和分数融合 |
 
 ## 6. 四条核心数据流
 
@@ -113,6 +115,7 @@ ChatPage -> POST /chat -> InputSafetyGuard
 -> partition_hint? user single route : Router LLM
 -> single | composite(max 2) | clarify
 -> partition-specific txtai search
+-> optional document -> section -> chunk routing
 -> SQLite ready + confirmed_partition validation
 -> Answer LLM with retrieved evidence, or extractive fallback
 -> citation whitelist
@@ -124,6 +127,7 @@ ChatPage -> POST /chat -> InputSafetyGuard
 - 用户显式选择分区时跳过 Router LLM，只检索一个索引。
 - 自动复合路由最多访问两个不同分区，不访问第三个索引。
 - txtai 只负责召回；文档是否 `ready`、最终分区和展示正文以 SQLite 为准。
+- 检索固定使用三层树索；父节点只用于缩小叶子 Chunk 候选，不能作为回答引用，也不存在 Flat fallback。
 - `pending_review` 文档对聊天不可见。
 - 解析质量和内容建议只辅助审核；审核人必须显式确认最终分区，建议不会自动写入索引。
 - Answer LLM 只能引用本次召回的 Chunk ID。
@@ -132,13 +136,13 @@ ChatPage -> POST /chat -> InputSafetyGuard
 
 ## 8. 配置与生命周期
 
-应用启动时创建所需目录、初始化 SQLite、将遗留 `indexing`、`reindexing` 或 `deleting` 状态标记为 `failed`、加载三个索引，并按环境变量构造可选 LLM Provider。`SERVE_FRONTEND=true` 时，应用还校验并托管 `frontend/dist`，使页面与 API 使用同一 Origin；应用关闭时清空索引注册表并释放数据库连接。
+应用启动时创建所需目录、初始化 SQLite、将遗留 `indexing`、`reindexing` 或 `deleting` 状态标记为 `failed`、加载三个分区的 document/section/chunk 九个树索实例，并构造可选 LLM Provider。启动同步会校验 `ready` 文档、写入三层并清除已知 Chunk 的跨分区残留；不一致会阻止完整服务启动。`SERVE_FRONTEND=true` 时还校验并托管 `frontend/dist`；关闭时清空树索注册表并释放数据库连接。
 
 配置详情和启动命令见[本地开发](../operations/local-development.md)。
 
 ## 9. 变更入口
 
-修改前先从[文档导航](../README.md)选择功能文档。共享 Schema、配置、API Client、公共组件、数据库表和 IndexRegistry 可能影响多个功能，必须按功能文档中的 `shared` 规则检查消费者。
+修改前先从[文档导航](../README.md)选择功能文档。共享 Schema、配置、API Client、公共组件、数据库表和 HierarchicalIndexRegistry 可能影响多个功能，必须按功能文档中的 `shared` 规则检查消费者。
 
 ## 10. 已知架构限制
 
@@ -148,4 +152,5 @@ ChatPage -> POST /chat -> InputSafetyGuard
 - 前端会话只在当前浏览器本地持久化，没有账号隔离、服务端存储或跨设备同步。
 - 已实现单文档删除、已入库分区调整和重新审核；仍无普通失败重试、重新解析、批量管理和全库索引重建 API。
 - 真实 Router/Answer 模型质量和超时表现尚未验证。
+- 树状检索是唯一运行路径；代码和迁移工具已完成，但真实业务数据迁移、真实 txtai 性能、召回率和内存验证尚未执行。
 - 受信任内网单端口模式已实现，但当前没有登录或授权；普通启动只能验证连通性。常态内网部署还必须完成受限防火墙规则创建及另一台同网段设备的访问确认。

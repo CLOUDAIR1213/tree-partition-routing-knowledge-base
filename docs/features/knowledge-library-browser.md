@@ -1,8 +1,8 @@
 # 知识库目录与文档详情
 
 > 文档状态：已实现  
-> 最近核对：2026-09-03  
-> 代码基线：`9221517` 加当前工作树快照  
+> 最近核对：2026-09-07
+> 代码基线：工作树快照（本目录不是 Git 仓库）  
 > 维护责任：待指定
 
 ## 1. 功能说明
@@ -30,9 +30,9 @@ SQLite 中的文档状态、分区和 Chunk 正文是页面事实来源；页面
 6. Chunk 始终按 `chunk_index` 升序显示，不按章节名、页码或检索相关度重排。
 7. 只有 `pending_review` 显示批准和拒绝；只有 `ready` 显示“可检索”。
 8. 上传成功跳转统一详情；旧的 `/knowledge/review/:documentId` 重定向到新地址。
-9. `ready` 文档可直接选择新分区；系统先写入并验证新索引，再清理其他分区，最后更新 SQLite 最终分区和审核字段。
-10. `ready` 文档可退回重新审核；系统先从三个索引删除该文档 Chunk，再清空最终分区和 `indexed_at`，状态回到 `pending_review`。
-11. `pending_review`、`ready`、`rejected` 和 `failed` 可删除；系统清理三个索引、原文件、解析快照后，删除 SQLite 文档和级联 Chunk。
+9. `ready` 文档可直接选择新分区；系统先写入并验证新分区的 document、section、chunk 三层，再清理其他分区，最后更新 SQLite 最终分区和审核字段。
+10. `ready` 文档可退回重新审核；系统先从三个分区删除该文档的三层索引，再清空最终分区和 `indexed_at`，状态回到 `pending_review`。
+11. `pending_review`、`ready`、`rejected` 和 `failed` 可删除；系统清理三个分区的 Chunk/树节点、原文件、解析快照后，删除 SQLite 文档和级联 Chunk/节点。
 
 | 当前状态 | 页面表达 | 可执行操作 | 后续结果 |
 | --- | --- | --- | --- |
@@ -56,10 +56,10 @@ SQLite 中的文档状态、分区和 Chunk 正文是页面事实来源；页面
 | `frontend/src/pages/ReviewPage.tsx` | 通用详情、审核和管理操作 | 元数据和预览独立加载；按状态显示批准、改分区、重新审核或删除；破坏性操作使用确认对话框 |
 | `frontend/src/components/KnowledgeDocumentTable.tsx` | 文档列表 | 桌面表格、移动端紧凑行、整行导航 |
 | `frontend/src/components/KnowledgeFilters.tsx` | 筛选工具栏 | 搜索、状态、分区、清除筛选 |
-| `frontend/src/components/ChunkPreviewList.tsx` | Chunk 展示 | 复用分页与展开，严格按后端顺序显示 |
+| `frontend/src/components/ChunkPreviewList.tsx` | Chunk 展示 | 复用分页与展开，严格按后端顺序显示；展开只解除三行高度限制，不改变正文的连续文本排版 |
 | `frontend/src/components/DocumentStatusBadge.tsx` | 状态标签 | 复用九种状态映射 |
 | `frontend/src/App.tsx` | 路由 | 新增目录和详情，旧审核地址重定向 |
-| `frontend/src/components/layout/AppSidebar.tsx` | 全局入口 | “知识库”以普通单行导航固定在最近会话之后、用户区之前，并显示当前页状态；最近会话继续占用侧栏剩余高度 |
+| `frontend/src/components/layout/AppSidebar.tsx` | 全局入口 | 全局品牌显示为“树索分区知识库”；“知识库”以普通单行导航固定在最近会话之后、用户区之前，并显示当前页状态；最近会话继续占用侧栏剩余高度 |
 
 URL 保存可恢复的页面状态：
 
@@ -81,8 +81,8 @@ URL 保存可恢复的页面状态：
 | `app/models/schemas.py` | 复用现有响应模型 | OpenAPI、前端生成类型 |
 | `app/db/tables.py` | 复用文档和 Chunk 字段 | 不计划改 Schema |
 | `app/services/review.py` | 批准/拒绝和索引写入 | 复用现有状态与补偿 |
-| `app/services/index_registry.py` | txtai 管理 | 目录和详情不直接调用 |
-| `app/services/document_management.py` | 文档生命周期管理 | SQLite、FileStorage、IndexRegistry；条件抢占与失败补偿 |
+| `app/services/hierarchical_index.py` | 三层 txtai 管理 | 目录和详情不直接调用 |
+| `app/services/document_management.py` | 文档生命周期管理 | SQLite、FileStorage、HierarchicalIndexRegistry；条件抢占与失败补偿 |
 
 列表查询语义：
 
@@ -100,9 +100,10 @@ URL 保存可恢复的页面状态：
 | --- | --- | --- | --- |
 | SQLite | `documents` | 读/写/删 | 目录、详情、状态和分区的权威来源；管理操作写状态、最终分区和最后审核字段 |
 | SQLite | `chunk_candidates` | 读/写/删 | 按 `chunk_index` 分页且不返回 `embedding_text`；改分区重写 `indexed_at`；重新审核清空；删除文档时级联删除 |
+| SQLite | `hierarchy_nodes` | 写/删 | 保存文档/章节节点；改分区更新分区，重新审核和删除时删除 |
 | 文件 | `data/raw/<document_id>/` | 删 | 仅删除文档操作访问，页面不暴露服务器路径 |
 | 文件 | `data/staging/<document_id>/parse.json` | 读/删 | 详情读取质量报告；删除文档时清理 |
-| txtai | `data/indexes/<partition>/` | 写/删 | 改分区时保留一个权威分区；重新审核和删除时清理三个分区 |
+| txtai | `data/indexes-hierarchical/<partition>/<level>/` | 写/删 | 对 document、section、chunk 三层执行改分区、重审和删除；父节点不显示给页面 |
 
 本功能不新增数据库迁移。详情和 Chunk 分开请求，因此预览失败不影响文档元数据展示。
 
@@ -137,11 +138,11 @@ URL 保存可恢复的页面状态：
 | `frontend/src/api/client.ts`、`types.ts` | API 适配 | `shared` | 以生成类型为准 |
 | `app/api/documents.py` | 文档 API | `shared` | 保持既有端点兼容 |
 | `app/services/document_management.py` | 管理操作和补偿 | `owned` | 同时检查 SQLite、文件和三个 txtai 索引 |
-| `app/services/index_registry.py` | 索引写入、删除和全 Chunk 验证 | `shared` | 检查审核、检索、健康和启动流程 |
+| `app/services/hierarchical_index.py` | 三层索引写入、删除和 ID 验证 | `shared` | 检查审核、检索、健康和启动流程 |
 | `app/models/enums.py`、`app/models/schemas.py`、`app/db/session.py` | 状态、API 契约和中断恢复 | `shared` | 同步前端状态和生成契约 |
 | `contracts/openapi.json`、`frontend/src/api/generated.ts` | 契约产物 | `generated` | 只能运行生成命令更新 |
 | `tests/integration/test_documents_api.py`、`frontend/src/App.test.tsx` | 验证 | `shared` | 使用临时数据和 Mock |
-| `data/raw/`、`data/staging/`、`data/indexes/`、`data/metadata/` | 真实数据 | `runtime-data` | 实施验证不得修改 |
+| `data/raw/`、`data/staging/`、`data/indexes-hierarchical/`、`data/metadata/` | 真实数据 | `runtime-data` | 实施验证不得修改 |
 | 普通失败重试、重新解析、全库索引重建 | 跨存储生命周期 | `approval-required` | 需独立设计并获得明确方向 |
 
 ## 9. 核心不变量与安全约束
@@ -154,9 +155,9 @@ URL 保存可恢复的页面状态：
 - 审核继续由后端保证 `pending_review` 的单次状态声明。
 - 删除、改分区和重新审核必须先用条件更新抢占状态；`indexing`、`reindexing`、`deleting`、`uploaded` 和 `parsing` 不允许并发管理。
 - 管理操作期间文档不是 `ready`，聊天检索必须忽略它。
-- 更改分区后，全部 Chunk 必须在新分区可验证，且在其他两个分区不存在，才能恢复 `ready`。
-- 重新审核后 `confirmed_partition` 和所有 Chunk `indexed_at` 必须为 null，三个索引中都不得保留该文档 Chunk。
-- 删除成功后三个索引、raw、staging、`documents` 和 `chunk_candidates` 都不得再保留该文档。
+- 更改分区后，全部 Chunk 和已启用树节点必须在新分区可验证，且在其他两个分区不存在，才能恢复 `ready`。
+- 重新审核后 `confirmed_partition` 和所有 Chunk/节点 `indexed_at` 必须为 null 或删除，三个索引中都不得保留该文档 Chunk 或树节点。
+- 删除成功后三个索引面、raw、staging、`documents`、`chunk_candidates` 和 `hierarchy_nodes` 都不得再保留该文档。
 - 页面必须解释详情顺序是原文顺序，聊天召回顺序是语义相关度顺序。
 
 ## 10. 错误处理与恢复
@@ -191,14 +192,17 @@ URL 保存可恢复的页面状态：
 | 构建 | TypeScript 与 Vite | `npm run build` |
 | 响应式 | 三种视口的列表与详情 | `frontend/tests/e2e/responsive.spec.ts`，仅用户明确要求时运行 |
 
-实施后的最低验证为文档 API 定向测试、前端 API/页面测试、前端构建、OpenAPI 检查和 Ruff。全部测试使用临时 SQLite 与 FakeIndexRegistry，不修改现有运行数据。
+2026-09-04 tree-only 实施后的后端 70/70、前端 38/38、前端构建、OpenAPI 生成和 Ruff 均通过。全部测试使用临时 SQLite 与 FakeTreeIndexRegistry，不修改现有运行数据。
 
 本次已核对文档导航、系统总览、接入、审核、存储、API、测试文档，以及实际路由、页面、组件、后端端点、Schema、测试和 Git 状态。2026-09-03 实际执行：后端全量测试 45/45 通过；前端 Vitest 37/37 通过；前端生产构建通过；OpenAPI 快照与应用 Schema 一致，前端类型连续两次生成哈希一致；Ruff 通过；本地目录、详情、管理操作区和改分区对话框的只读浏览器检查通过，无控制台错误。未运行完整 E2E，浏览器检查未提交任何管理操作。
+
+2026-09-07 审批超时状态恢复实施后：后端 73 项通过、1 项显式真实服务测试跳过，前端 39/39、生产构建、Python compileall 和 Ruff 通过；未运行 Playwright、真实模型性能测试或业务数据写入。
 
 ## 12. 已知限制与后续计划
 
 - 当前列表只支持标题/文件名包含搜索，不搜索 Chunk 正文。
-- 当前页面不自动轮询 `uploaded`、`parsing` 或 `indexing`；用户可刷新页面读取最新状态。
+- 当前页面不自动轮询 `uploaded`、`parsing`、`reindexing` 或 `deleting`；详情页对审批超时或已处于 `indexing` 的文档会自动轮询，直到进入稳定状态。
+- 审批同步写入三层树索超过前端 120 秒等待上限时，浏览器请求会超时但后端可能继续完成。详情页已实现状态回查、`indexing` 轮询和重复批准防护；尚未提供阶段进度百分比、后台任务或可取消操作。
 - 当前不存在待审核数量统计、来源或时间范围筛选。
 - 尚无批量删除、从原文件重新解析、普通失败状态重试和全库索引重建。
 - 审核与管理备注仅保留最后一次操作字段，尚无追加式、不可变的审计历史。

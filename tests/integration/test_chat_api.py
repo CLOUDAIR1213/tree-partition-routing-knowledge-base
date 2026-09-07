@@ -1,5 +1,14 @@
 import json
+import logging
 
+from app.models.enums import Partition
+from app.services.hierarchical_index import (
+    DOCUMENT_LEVEL,
+    SECTION_LEVEL,
+    HierarchyNode,
+    HierarchySearchHit,
+    normalize_section,
+)
 from app.services.web_search import WebSearchResult
 
 
@@ -83,7 +92,8 @@ def test_partition_hint_searches_only_selected_index(client, fake_registry):
     assert response.json()["route"] == "tech"
     assert response.json()["decision_source"] == "user_hint"
     assert response.json()["searched_partitions"] == ["tech"]
-    assert fake_registry.search_calls == ["tech"]
+    assert fake_registry.node_search_calls == [("tech", DOCUMENT_LEVEL)]
+    assert fake_registry.search_calls == []
     assert response.json()["answer_source"] == "none"
     assert response.json()["web_citations"] == []
     timing = response.json()["timing"]
@@ -91,6 +101,249 @@ def test_partition_hint_searches_only_selected_index(client, fake_registry):
     assert timing["retrieval"][0]["elapsed_ms"] >= 0
     assert timing["router_llm_ms"] is None
     assert timing["answer_llm_ms"] is None
+
+
+def test_hierarchical_retrieval_constrains_leaf_hits_and_keeps_chunk_citations(
+    hierarchical_client,
+    fake_registry,
+    fake_hierarchy_registry,
+):
+    chunk_id = upload_ready_document(
+        hierarchical_client, fake_registry, "tech", "hierarchy.md"
+    )
+    row = fake_registry.rows["tech"][chunk_id]
+    document_id = row["document_id"]
+    section = normalize_section(row["section"])
+    document_node = HierarchyNode(
+        id=f"hdoc:{document_id}",
+        level=DOCUMENT_LEVEL,
+        partition=Partition.TECH,
+        document_id=document_id,
+        section=None,
+        text="技术制度",
+    )
+    section_node = HierarchyNode(
+        id=f"hsec:{document_id}:example",
+        level=SECTION_LEVEL,
+        partition=Partition.TECH,
+        document_id=document_id,
+        section=section,
+        text="技术制度章节",
+    )
+    fake_hierarchy_registry.search_results[("tech", DOCUMENT_LEVEL)] = [
+        HierarchySearchHit(document_node, 0.92)
+    ]
+    fake_hierarchy_registry.search_results[("tech", SECTION_LEVEL)] = [
+        HierarchySearchHit(section_node, 0.86)
+    ]
+    fake_registry.search_results["tech"] = [{"id": chunk_id, "score": 0.90}]
+
+    response = hierarchical_client.post(
+        "/api/v1/chat",
+        json={"question": "技术制度怎么处理？", "partition_hint": "tech"},
+    )
+
+    payload = response.json()
+    assert payload["code"] == "OK"
+    assert [citation["chunk_id"] for citation in payload["citations"]] == [chunk_id]
+    assert fake_hierarchy_registry.node_search_calls == [
+        ("tech", DOCUMENT_LEVEL),
+        ("tech", SECTION_LEVEL),
+    ]
+    assert fake_hierarchy_registry.search_document_constraints == [
+        None,
+        frozenset({document_id}),
+    ]
+    assert fake_registry.search_calls == ["tech"]
+    assert fake_registry.search_section_constraints == [
+        frozenset({(document_id, section)})
+    ]
+
+
+def test_hierarchical_parent_beams_ignore_chunk_min_score_and_log_diagnostics(
+    hierarchical_client,
+    fake_registry,
+    fake_hierarchy_registry,
+    caplog,
+):
+    chunk_id = upload_ready_document(
+        hierarchical_client, fake_registry, "finance", "payment-policy.md"
+    )
+    row = fake_registry.rows["finance"][chunk_id]
+    document_id = row["document_id"]
+    section = normalize_section(row["section"])
+    document_node = HierarchyNode(
+        id=f"hdoc:{document_id}",
+        level=DOCUMENT_LEVEL,
+        partition=Partition.FINANCE,
+        document_id=document_id,
+        section=None,
+        text="付款制度",
+    )
+    section_node = HierarchyNode(
+        id=f"hsec:{document_id}:payment",
+        level=SECTION_LEVEL,
+        partition=Partition.FINANCE,
+        document_id=document_id,
+        section=section,
+        text="付款批次",
+    )
+    fake_hierarchy_registry.search_results[("finance", DOCUMENT_LEVEL)] = [
+        HierarchySearchHit(document_node, 0.12)
+    ]
+    fake_hierarchy_registry.search_results[("finance", SECTION_LEVEL)] = [
+        HierarchySearchHit(section_node, 0.34)
+    ]
+    fake_registry.search_results["finance"] = [{"id": chunk_id, "score": 0.90}]
+
+    caplog.set_level(logging.INFO)
+    response = hierarchical_client.post(
+        "/api/v1/chat",
+        json={"question": "付款批次", "partition_hint": "finance"},
+    )
+
+    assert response.json()["code"] == "OK"
+    assert [citation["chunk_id"] for citation in response.json()["citations"]] == [
+        chunk_id
+    ]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "level=document candidate_count=1" in message
+        and "threshold_filtered_count=0" in message
+        for message in messages
+    )
+    assert any(
+        "level=section candidate_count=1" in message
+        and "threshold_filtered_count=0" in message
+        for message in messages
+    )
+    assert any(
+        "level=chunk candidate_count=1" in message
+        and "threshold_filtered_count=0" in message
+        and "accepted_count=1" in message
+        for message in messages
+    )
+
+
+def test_hierarchical_metadata_scopes_prevent_global_candidate_crowding(
+    hierarchical_client,
+    fake_registry,
+    fake_hierarchy_registry,
+):
+    chunk_id = upload_ready_document(
+        hierarchical_client, fake_registry, "tech", "scoped-hierarchy.md"
+    )
+    row = fake_registry.rows["tech"][chunk_id]
+    document_id = row["document_id"]
+    section = normalize_section(row["section"])
+    document_node = HierarchyNode(
+        id=f"hdoc:{document_id}",
+        level=DOCUMENT_LEVEL,
+        partition=Partition.TECH,
+        document_id=document_id,
+        section=None,
+        text="目标文档",
+    )
+    section_node = HierarchyNode(
+        id=f"hsec:{document_id}:target",
+        level=SECTION_LEVEL,
+        partition=Partition.TECH,
+        document_id=document_id,
+        section=section,
+        text="目标章节",
+    )
+    section_distractors = [
+        HierarchySearchHit(
+            HierarchyNode(
+                id=f"hsec:other-{position}",
+                level=SECTION_LEVEL,
+                partition=Partition.TECH,
+                document_id=f"other-document-{position}",
+                section="无关章节",
+                text="无关章节",
+            ),
+            0.99,
+        )
+        for position in range(100)
+    ]
+    fake_hierarchy_registry.search_results[("tech", DOCUMENT_LEVEL)] = [
+        HierarchySearchHit(document_node, 0.92)
+    ]
+    fake_hierarchy_registry.search_results[("tech", SECTION_LEVEL)] = [
+        *section_distractors,
+        HierarchySearchHit(section_node, 0.86),
+    ]
+
+    chunk_distractors = []
+    for position in range(100):
+        distractor_id = f"other-document-{position}:v1:00000"
+        fake_registry.rows["tech"][distractor_id] = {
+            "id": distractor_id,
+            "document_id": f"other-document-{position}",
+            "section": "无关章节",
+        }
+        chunk_distractors.append({"id": distractor_id, "score": 0.99})
+    fake_registry.search_results["tech"] = [
+        *chunk_distractors,
+        {"id": chunk_id, "score": 0.90},
+    ]
+
+    response = hierarchical_client.post(
+        "/api/v1/chat",
+        json={"question": "目标章节的制度是什么？", "partition_hint": "tech"},
+    )
+
+    assert response.json()["code"] == "OK"
+    assert [citation["chunk_id"] for citation in response.json()["citations"]] == [
+        chunk_id
+    ]
+    assert fake_hierarchy_registry.search_document_constraints == [
+        None,
+        frozenset({document_id}),
+    ]
+    assert fake_registry.search_section_constraints == [
+        frozenset({(document_id, section)})
+    ]
+
+
+def test_tree_only_returns_no_evidence_when_no_parent_nodes_exist(
+    hierarchical_client,
+    fake_registry,
+    fake_hierarchy_registry,
+):
+    chunk_id = upload_ready_document(
+        hierarchical_client, fake_registry, "tech", "fallback.md"
+    )
+    fake_registry.search_results["tech"] = [{"id": chunk_id, "score": 0.90}]
+    fake_hierarchy_registry.search_results[("tech", DOCUMENT_LEVEL)] = []
+
+    response = hierarchical_client.post(
+        "/api/v1/chat",
+        json={"question": "如何排查 502？", "partition_hint": "tech"},
+    )
+
+    assert response.json()["code"] == "NO_INTERNAL_EVIDENCE"
+    assert fake_hierarchy_registry.node_search_calls == [("tech", DOCUMENT_LEVEL)]
+    assert fake_registry.search_calls == []
+
+
+def test_tree_only_reports_unavailable_parent_level(
+    client,
+    fake_registry,
+):
+    fake_registry.fail_next_node_search = True
+
+    response = client.post(
+        "/api/v1/chat",
+        json={"question": "如何排查 502？", "partition_hint": "tech"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "INDEX_NOT_READY"
+    assert response.json()["details"] == {
+        "partition": "tech",
+        "level": DOCUMENT_LEVEL,
+    }
 
 
 def test_zero_internal_evidence_uses_opted_in_web_fallback(client, fake_registry):
@@ -269,7 +522,8 @@ def test_partition_hint_bypasses_configured_router(client, fake_registry):
 
     assert response.status_code == 200
     assert response.json()["route"] == "tech"
-    assert fake_registry.search_calls == ["tech"]
+    assert fake_registry.node_search_calls == [("tech", DOCUMENT_LEVEL)]
+    assert fake_registry.search_calls == []
     assert provider.calls == []
 
 

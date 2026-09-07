@@ -1,13 +1,13 @@
 # 聊天与分区路由
 
 > 文档状态：已实现  
-> 最近核对：2026-09-03
-> 代码基线：`61c551f` 加当前工作树快照  
+> 最近核对：2026-09-04
+> 代码基线：工作树快照（本目录不是 Git 仓库）  
 > 维护责任：待指定
 
 ## 1. 功能说明
 
-聊天功能接收企业知识问题，在财务、人事和技术三个知识分区中选择一个或两个分区检索，并基于已审核证据返回回答和可追溯引用。用户可以显式指定分区，也可以让 Router LLM 自动判断单一分区、复合分区或要求澄清。用户显式授权后，全部内部检索均无证据的公开低风险问题可以使用受限网络搜索兜底。每条 assistant 回答还返回分区检索与模型调用的独立耗时，用于区分索引性能与模型等待时间。
+聊天功能接收企业知识问题，在财务、人事和技术三个知识分区中选择一个或两个分区检索，并基于已审核证据返回回答和可追溯引用。用户可以显式指定分区，也可以让 Router LLM 自动判断单一分区、复合分区或要求澄清。用户显式授权后，全部内部检索均无证据的公开低风险问题可以使用受限网络搜索兜底。每条 assistant 回答还返回分区检索与模型调用的独立耗时。内部检索固定使用 `document -> section -> chunk` 三层树索，不提供 Flat 模式或 fallback。
 
 代码、契约和 Fake Provider 测试已覆盖内部单分区、复合路由、低分过滤及受限联网兜底。真实模型只完成两条内部问答兼容性冒烟；真实 Tavily 请求本轮返回 HTTP 401，当前知识 fixture 也不代表业务回答质量已通过。
 
@@ -25,7 +25,7 @@
 3. 前端调用 `POST /api/v1/chat`，请求期间保留输入并显示该请求所属会话的加载状态；用户可切换到其他会话，原请求继续在后台执行。
 4. 后端先阻断秘密值，或对邮箱、手机号、私网 IP 脱敏。
 5. 存在 `partition_hint` 时跳过 Router；否则 Router 返回 `single`、`composite` 或 `clarify`。公司基础信息（如公司简介、组织概况、主营业务、使命愿景、办公地点或联系渠道）默认路由为人事单分区；仅当同时存在可独立检索的财务或技术事项时才使用复合路由。
-6. Retriever 逐个访问计划中的索引，过滤低于 `RETRIEVAL_MIN_SCORE` 的召回，再用 SQLite 过滤非 `ready` 或分区不匹配的结果，同时按分区记录“索引检索加本地证据校验”耗时。
+6. 检索先在虚拟分区根内按 Beam Top-K 选择文档节点，再以选中文档 ID 作为 txtai metadata filter 查询章节，最后以精确文档/规范化章节对查询树索 Chunk 层。范围查询将 `similar` 候选数扩展到对应索引总量；SQLite 继续校验 `ready`、最终分区和范围。任一父层无候选即返回空证据，不回退旧 Flat。`RETRIEVAL_MIN_SCORE` 只过滤最终 Chunk 证据；每层日志记录候选数、最高分和阈值过滤数，不记录问题或正文。
 7. 自动路由和 Answer LLM 分别记录调用及本地输出校验耗时；有内部证据时由 Answer LLM 生成回答，未配置、超时或传输失败时使用每个分区首个 Chunk 的抽取式回答，不进入联网。
 8. 全部内部检索组均为空、用户通过输入框左下角的“未命中时联网”图标开关显式启用联网且问题通过低风险资格判断时，Tavily Provider 最多返回 5 条结构化结果，再由独立 Web Answer Prompt 生成最多 3 条来源的回答。
 9. 后端分别校验内部 Chunk ID 或网页 URL 白名单；Answer 的 JSON `answer` 字段可包含受限 Markdown。前端校验 `answer_source`、计时字段及两类 Citation 的互斥形状，只为 assistant 消息渲染 Markdown，并在其右上角显示本轮计时。
@@ -78,17 +78,17 @@
 
 | 路径或服务 | 职责 | 上下游依赖 |
 | --- | --- | --- |
-| `app/api/chat.py` | API 入口和对象装配 | Settings、LLM/Search Provider、IndexRegistry、AsyncSession |
+| `app/api/chat.py` | API 入口和对象装配 | Settings、LLM/Search Provider、HierarchicalIndexRegistry、AsyncSession |
 | `app/services/chat.py` | 端到端聊天编排 | Safety、Router、Retriever、内部/网络 Answerer |
 | `app/services/input_safety.py` | 本地输入安全 | 正则检测和 IP 地址判断 |
 | `app/services/routing.py` | Router Prompt、解析和一次修复 | LLM Provider、LLMRoutePlan |
-| `app/services/retriever.py` | 分区查询、SQLite 校验和分区级检索计时 | IndexRegistry、DocumentTable、ChunkCandidateTable |
+| `app/services/retriever.py` | Chunk 查询、SQLite 校验和分区级检索计时 | HierarchicalIndexRegistry、DocumentTable、ChunkCandidateTable |
 | `app/services/answering.py` | 内部和网络独立 Prompt 与引用白名单 | LLM Provider、RetrievalGroup、WebSearchResult |
 | `app/services/web_search.py` | Tavily 调用、结果规范化、URL 与问题资格过滤 | httpx、Settings |
 | `app/services/llm.py` | OpenAI-compatible 调用 | httpx Chat Completions |
 | `app/models/schemas.py` | 路由、回答和 HTTP 模型不变量 | Pydantic validators |
 
-Router 输出最多修复一次，必须满足严格 JSON 结构。复合路由必须恰好有两个不同分区。Router Prompt 将公司基础信息明确映射为人事单分区，并提供 HR JSON 示例；公司基础信息与可独立检索的财务或技术事项并存时仍使用复合路由。检索按 Router 子查询顺序串行执行，每个分区使用独立 top-k，并按 `RETRIEVAL_MIN_SCORE` 过滤低相关结果；不比较跨索引分数。默认值 `0.5` 适用于当前 Embedding 模型和演示数据，设置为 `0` 可关闭过滤并保留所有召回。
+Router 输出最多修复一次，必须满足严格 JSON 结构。复合路由必须恰好有两个不同分区。Router Prompt 将公司基础信息明确映射为人事单分区，并提供 HR JSON 示例；公司基础信息与可独立检索的财务或技术事项并存时仍使用复合路由。检索按 Router 子查询顺序串行执行，每个分区使用独立 top-k；document 和 section 仅以 Beam 导航，不比较跨索引分数，也不使用 Chunk 阈值。`RETRIEVAL_MIN_SCORE` 仅过滤低相关最终 Chunk。默认值 `0.5` 适用于当前 Embedding 模型和演示数据，设置为 `0` 可关闭叶子过滤并保留所有 Chunk 召回。
 
 联网 Provider 只接收通过安全检查的原问题并使用 Tavily `basic` 搜索；它不抓取结果页。默认请求超时为 60 秒，可通过 `WEB_SEARCH_TIMEOUT_SECONDS` 在 1–120 秒内调整。只保留公开 HTTPS URL，拒绝本机、私网、保留地址、带凭据 URL 和 `.local` 主机，并移除常见跟踪参数、片段、重复 URL 及同域名第三条以后结果。搜索失败时后端只记录失败类别和 HTTP 状态码，不记录问题、Key 或 Provider 响应正文；前端安全区分认证、限流、HTTP、超时、网络与无效响应。
 
@@ -100,7 +100,8 @@ Router 输出最多修复一次，必须满足严格 JSON 结构。复合路由�
 | 浏览器 `localStorage` | `partitioned-kb.chat-session` | 读写 | 当前浏览器的版本化历史快照；回答计时随消息恢复，进行中的请求、错误和重试输入不恢复 |
 | SQLite | `documents` | 只读 | 校验 `ready` 和 `confirmed_partition`，读取标题 |
 | SQLite | `chunk_candidates` | 只读 | 读取回答正文和引用定位 |
-| txtai | `data/indexes/<partition>/` | 只读 | 每个子查询只访问声明分区 |
+| txtai | `data/indexes-hierarchical/<partition>/<level>/` | 只读 | 固定读取 document、section、chunk 三层；章节绑定文档 ID，Chunk 绑定精确文档/章节对，父节点不作为回答证据 |
+| SQLite | `hierarchy_nodes` | 只读 | 树节点元数据；不复制 Chunk 正文，也不作为引用来源 |
 | 外部模型 | Router/Answer endpoint | 请求 | 只发送安全问题、子查询和本次命中证据 |
 | 外部搜索 | Tavily endpoint | 请求 | 仅在显式授权、零内部证据和资格判断通过后发送安全问题；不持久化结果 |
 
@@ -139,7 +140,8 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 | `frontend/src/api/client.ts`、`frontend/src/api/types.ts` | API 适配 | `shared` | 保持运行时校验和生成类型一致 |
 | `frontend/src/api/generated.ts`、`contracts/openapi.json` | 生成契约 | `generated` | 只使用生成命令更新 |
 | `frontend/src/styles.css` | 全局样式 | `shared` | 检查上传、审核和响应式页面 |
-| `data/indexes/`、`data/metadata/` | 检索和元数据 | `runtime-data` | 不用于普通验证写入 |
+| `data/indexes-hierarchical/`、`data/metadata/` | 检索和元数据 | `runtime-data` | 不用于普通验证写入 |
+| `data/indexes/` | 已退役 Flat 数据 | `runtime-data` | 运行时不读取；仅在迁移、备份和观察期完成后人工清理 |
 | 认证、权限、生产模型与搜索配额 | 生产边界 | `approval-required` | 需要明确安全、费用与部署决策 |
 
 ## 9. 核心不变量与安全约束
@@ -148,8 +150,10 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 - 自动路由中，公司基础信息必须使用 `hr` 单分区；只有同时包含独立财务或技术事项时才可使用复合路由。
 - Router `composite` 只能选择两个不同分区；`clarify` 不得访问索引。
 - 每个子查询只能访问声明的分区索引。
+- 父节点只可用于导航；最终 Answer 和 Citation 只能使用 SQLite 校验后的 Chunk ID。
+- 树索必须在索引查询层传递父级 metadata 范围；Chunk 约束是精确文档/章节对，而不是两个独立集合的交叉匹配。
 - 只有 SQLite 中 `ready` 且最终分区匹配的 Chunk 可以成为证据。
-- 低于 `RETRIEVAL_MIN_SCORE` 的 txtai 召回不是内部证据，不得进入 Answer、Citation 或阻断显式授权的联网兜底。
+- 低于 `RETRIEVAL_MIN_SCORE` 的最终 Chunk 召回不是内部证据，不得进入 Answer、Citation 或阻断显式授权的联网兜底；父节点始终只用于 Beam 导航。
 - Citation 必须属于本次命中，且 Citation 分区必须在 `searched_partitions` 中。
 - 秘密值不得发送给索引或模型；个人信息和私网地址先脱敏。
 - Answer 输入不得包含服务器路径、校验和、Embedding 文本或未命中正文。
@@ -193,6 +197,7 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 | 层级 | 覆盖内容 | 文件或命令 |
 | --- | --- | --- |
 | 后端集成 | manual、clarify、composite、联网授权、低分过滤、内部优先、范围拒绝、引用越界 | `tests/integration/test_chat_api.py` |
+| 实际服务（显式启用） | 真实 txtai 下的章节标题精确匹配与 Citation | `tests/integration/test_real_txtai_retrieval.py` |
 | 后端单元 | 邮箱、手机号、私网 IP 脱敏 | `tests/unit/test_input_safety.py` |
 | 后端单元 | 联网资格、公开 HTTPS URL 规范化和搜索失败分类 | `tests/unit/test_web_search.py` |
 | 后端单元 | 公司基础信息的人事路由 Prompt 与 HR JSON 示例 | `tests/unit/test_routing.py` |
@@ -212,14 +217,13 @@ SQLite 和索引关系详见[数据与存储](../architecture/data-and-storage.m
 
 ## 12. 已知限制与后续计划
 
-- 2026-09-07 审查确认当前为固定三分区路由，尚无多层知识节点或逐层路由。索引加载失败被当作空结果、top-k 过滤后未补充召回的问题及树化设计见[树状路由索引优化与实施方案](../plans/tree-routing-index-optimization.md)；本次仅补充计划，尚未修复或迁移。
-
 - 真实 Router 和 Answer 已完成两条协议兼容性冒烟，但尚未进行批量路由或回答质量评估。
 - 当前扩充 fixture 主要是通用占位句，缺少真实可核验的角色、期限、金额、材料和步骤，不能用于业务答案验收。
 - 历史仅保存在当前浏览器的 `localStorage`，没有账号隔离、服务端会话、跨设备同步或跨轮上下文；清理站点数据会删除历史。
 - 刷新页面不会恢复进行中的网络请求、会话级 loading、错误或重试输入；它们只存在于当前 React 运行期。
 - 当前没有流式 API；引入 SSE 或 WebSocket 时，必须复用本功能定义的不可变请求上下文，逐 Chunk 写入原 `conversationId`。
 - 当前指标用于单次本地观测，不是跨机器或跨负载的性能基准；索引预热、SQLite 缓存、CPU 竞争和复合检索的串行执行会影响对比结果。
+- 三层索引随审核、删除、分区迁移和重新审核即时同步；启动会修复 `ready` 文档并清除已知 Chunk 的跨分区残留。父节点缺失或误选时返回空结果，不存在 Flat fallback。txtai metadata filter 不等同于大规模 IVF 的原生 ANN 预过滤，性能与严格性仍需以获批评测决定。
 - 不支持三个分区问题；这类问题返回 clarify。
 - 没有关键词检索、RRF 或重排器。
 - 输入安全是有限模式匹配，不等同于完整 DLP。

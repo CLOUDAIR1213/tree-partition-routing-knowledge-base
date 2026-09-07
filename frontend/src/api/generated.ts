@@ -438,21 +438,27 @@ export interface components {
         };
         /** IndexHealth */
         IndexHealth: {
+            finance: components["schemas"]["IndexLevelHealth"];
+            hr: components["schemas"]["IndexLevelHealth"];
+            tech: components["schemas"]["IndexLevelHealth"];
+        };
+        /** IndexLevelHealth */
+        IndexLevelHealth: {
             /**
-             * Finance
+             * Chunk
              * @enum {string}
              */
-            finance: "ready" | "error";
+            chunk: "ready" | "error";
             /**
-             * Hr
+             * Document
              * @enum {string}
              */
-            hr: "ready" | "error";
+            document: "ready" | "error";
             /**
-             * Tech
+             * Section
              * @enum {string}
              */
-            tech: "ready" | "error";
+            section: "ready" | "error";
         };
         /** ParseQualityReport */
         ParseQualityReport: {

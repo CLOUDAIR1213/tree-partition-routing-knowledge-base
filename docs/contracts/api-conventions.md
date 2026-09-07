@@ -1,7 +1,7 @@
 # API 契约与错误约定
 
 > 最近核对：2026-09-03
-> 代码基线：`61c551f` 加当前工作树快照
+> 代码基线：工作树快照（本目录不是 Git 仓库）
 
 ## 1. 契约来源
 
@@ -119,7 +119,7 @@ FastAPI routes + Pydantic schemas
 
 ## 8. 当前契约状态
 
-2026-09-03 使用 `create_app().openapi()` 与 `contracts/openapi.json` 做内存比较，结果一致，共 10 个 HTTP operations。前端生成类型包含问答、文档接入、审核、删除、改分区、重新审核和健康检查契约。
+2026-09-04 从当前 FastAPI Schema 重新导出 `contracts/openapi.json` 并生成前端类型，共 10 个 HTTP operations。健康模型现按 finance/hr/tech 分区分别包含 document、section、chunk 状态。
 
 ## 9. 修改边界
 

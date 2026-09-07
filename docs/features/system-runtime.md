@@ -1,8 +1,8 @@
 # 系统运行时
 
 > 文档状态：部分实现  
-> 最近核对：2026-09-03
-> 代码基线：`61c551f` 加当前工作树快照  
+> 最近核对：2026-09-04
+> 代码基线：工作树快照（本目录不是 Git 仓库）  
 > 维护责任：待指定
 
 ## 1. 功能说明
@@ -23,7 +23,7 @@
 | 当前状态 | 操作或条件 | 下一状态 | 失败处理 |
 | --- | --- | --- | --- |
 | 进程启动 | 创建目录和 SQLite 表 | 初始化中 | 未捕获异常阻止应用启动 |
-| 初始化中 | 恢复遗留 indexing、加载索引、构造 Provider | 服务中 | 索引加载错误记录为健康 error |
+| 初始化中 | 恢复遗留 indexing、加载九个树索层、同步 ready 文档、构造 Provider | 服务中 | 任一树索加载错误会在同步写入前停止启动，并报告分区、层级和异常类别；数据同步错误同样阻止完整启动 |
 | 内网启动 | 管理员构建前端、创建受限防火墙规则并验证 `frontend/dist` | 服务中 | 构建目录缺失、端口占用或 UAC 未授权时不启动 |
 | 普通内网验证启动 | 由操作者承担 OS 网络访问控制，设置 `SERVE_FRONTEND=true` 并监听全部接口 | 服务中 | 端口占用或静态构建缺失时不启动；没有来源限制时不得用于常态部署 |
 | 服务中 | 收到 HTTP 请求 | 请求处理中 | 分配或接受合法 Request ID |
@@ -39,22 +39,22 @@
 | --- | --- | --- |
 | `frontend/src/api/client.ts` | 共享 fetch、超时和错误体 | 普通请求默认 30 秒，聊天 100 秒；非 2xx 转 ApiError；无法识别错误体时生成稳定 fallback |
 | `frontend/src/components/layout/AppShell.tsx` | 应用布局生命周期 | 路由变化关闭移动侧栏；Escape 关闭侧栏 |
-| `frontend/vite.config.ts` | 本地代理 | `/api` 默认代理到 `127.0.0.1:8000` |
-| `frontend/src/vite-env.d.ts` | 前端环境变量类型 | `VITE_API_BASE_URL`、`VITE_PROXY_TARGET` |
+| `frontend/vite.config.ts` | 本地代理 | 默认固定监听 `127.0.0.1:5174`，端口冲突立即失败；`/api` 默认代理到 `127.0.0.1:8001` |
+| `frontend/src/vite-env.d.ts` | 前端环境变量类型 | `VITE_API_BASE_URL`、`VITE_DEV_PORT`、`VITE_PROXY_TARGET` |
 | `frontend/dist/` | 内网演示静态资源 | 由 Vite 构建生成；同源请求 `/api/v1/*`，无需开发代理或跨域 |
 
 ## 5. 后端实现
 
 | 路径或服务 | 职责 | 上下游依赖 |
 | --- | --- | --- |
-| `app/main.py` | 应用工厂、lifespan、中间件、异常处理和可选 SPA 静态托管 | Settings、Database、IndexRegistry、LLM Provider、`frontend/dist` |
+| `app/main.py` | 应用工厂、lifespan、中间件、异常处理和可选 SPA 静态托管 | Settings、Database、HierarchicalIndexRegistry、LLM Provider、`frontend/dist` |
 | `app/core/config.py` | 环境配置和派生状态 | pydantic-settings、`.env`；`SERVE_FRONTEND`、`FRONTEND_DIST_DIR` |
 | `app/core/request_id.py` | Request ID 生成和校验 | secrets、正则 |
 | `app/core/errors.py` | 稳定应用错误 | API 异常处理器 |
 | `app/api/dependencies.py` | 请求级依赖 | app.state |
-| `app/api/health.py` | 组件状态 | SQLite、IndexRegistry、Settings |
+| `app/api/health.py` | 组件状态 | SQLite、HierarchicalIndexRegistry、Settings |
 | `app/db/session.py` | 数据库生命周期 | SQLAlchemy async engine |
-| `app/services/index_registry.py` | 索引加载和健康 | txtai |
+| `app/services/hierarchical_index.py` | 三分区三层索引加载和健康 | txtai |
 | `app/services/llm.py` | 可选 LLM Provider 构造 | Settings、httpx |
 | `app/services/web_search.py` | 默认关闭的 Tavily Search Provider 构造 | Settings、httpx |
 
@@ -66,9 +66,9 @@
 | --- | --- | --- | --- |
 | SQLite | metadata database | 读写 | 初始化表、健康查询、恢复遗留 indexing |
 | 文件目录 | data roots | 写目录 | 启动时确保目录存在，不写业务测试数据 |
-| txtai | 三个分区目录 | 读/加载 | 加载失败使健康 degraded |
+| txtai | `data/indexes-hierarchical/<partition>/<level>/` | 读/加载 | 九个分区/层级实例逐项报告，任一加载失败使健康 degraded |
 | 前端构建产物 | `frontend/dist/` | 只读 | 仅在 `SERVE_FRONTEND=true` 时读取 `index.html` 和 `/assets`；不存放业务数据 |
-| 进程内存 | `app.state` | 读写 | Settings、Database、IndexRegistry、LLM Provider、Search Provider |
+| 进程内存 | `app.state` | 读写 | Settings、Database、HierarchicalIndexRegistry、LLM Provider、Search Provider |
 | 环境文件 | `.env` | 只读 | 本地配置和密钥；不得提交 |
 
 ## 7. API 接口
@@ -88,7 +88,7 @@
 | --- | --- | --- | --- |
 | `app/main.py` | 应用共享入口 | `shared` | 检查所有 API、测试 fixture 和启动行为 |
 | `app/core/config.py`、`.env.example` | 配置契约 | `shared` | 同步运行文档、健康状态和测试隔离 |
-| `scripts/start_intranet.ps1` | 受信任内网单端口启动与防火墙规则 | `owned` | 仅允许当前指定私网网段；管理员运行；停止后移除自身规则 |
+| `scripts/start_intranet.ps1` | 受信任内网单端口启动与防火墙规则 | `owned` | 仅允许当前指定私网网段；构建时强制同源 API；管理员运行；停止后移除自身规则并恢复临时环境变量 |
 | `frontend/dist/` | Vite 构建产物 | `generated` | 仅由 `npm --prefix frontend run build` 生成，禁止手工修改 |
 | `app/core/errors.py`、`app/core/request_id.py` | 错误与请求标识 | `shared` | 同步 API 契约和前端错误处理 |
 | `app/api/dependencies.py` | 共享依赖 | `shared` | 检查所有路由装配 |
@@ -109,7 +109,9 @@
 - Provider 未配置时系统仍应支持手动分区和抽取式回答。
 - Search Provider 默认关闭；启用但缺少 Key 时只报告 `not_configured`，不得阻止内部能力启动。
 - 当前无认证，只允许可信本地演示环境。
+- 新版 Vite 开发服务器固定为 loopback `5174`，不得因端口占用静默迁移；旧版 `5173` 不属于本项目的监听范围。
 - `SERVE_FRONTEND=true` 时必须先存在完整的 `frontend/dist/index.html` 与 `frontend/dist/assets`，否则拒绝启动，避免向内网提供不完整页面。
+- 受信任内网脚本必须让构建产物使用同源 API，并使 `APP_HOST`、`APP_PORT` 与 Uvicorn 实际监听值一致；本机的前端开发直连配置不得泄漏到内网构建，构建失败时不得创建入站规则或启动服务。
 - 内网启动脚本只监听指定端口，并以 Windows 防火墙 `RemoteAddress` 严格限制指定子网入站访问；规则覆盖网络配置文件，以兼容被 Windows 标记为“公用”的受信任企业内网；不允许将该模式暴露到互联网。
 - SPA 路由可回退至入口页，但未知 `/api/*` 路径仍必须返回统一 JSON `404`，不得被 HTML 页面掩盖。
 
@@ -123,8 +125,10 @@
 | 方法不允许 | 405 `METHOD_NOT_ALLOWED` | 统一 JSON | 修正方法 |
 | 未分类异常 | 500 `INTERNAL_ERROR` | 隐藏内部异常 | 通过 Request ID 定位；当前缺少实际日志记录 |
 | SQLite 或索引异常 | 503 `SERVICE_UNAVAILABLE` | health details 返回组件状态 | 修复组件并重启/重试 |
+| 树索加载失败 | 服务不启动 | 生命周期在同步 ready 文档前以 `partition/level (ExceptionType)` 终止，并保留原始异常链供本机终端诊断 | 修复对应索引或模型问题后，确认没有其他服务持有该目录，再重启 |
 | 遗留 indexing | 文档改为 failed | 启动时标记恢复错误 | 人工检查索引状态 |
 | 前端构建缺失或不完整 | 内网服务不启动 | `SERVE_FRONTEND` 启动校验直接失败 | 在仓库根目录重新执行前端构建后再启动 |
+| Vite `5174` 已被占用 | 本地前端不启动 | `strictPort` 拒绝自动改用其他端口 | 关闭占用进程，或在 `frontend/.env.local` 明确指定可用 `VITE_DEV_PORT` 并同步 CORS |
 | 端口已被本地服务占用 | 启动脚本停止并提示 | 不修改防火墙规则或业务数据 | 先关闭占用端口的开发服务 |
 | Windows 未授予管理员权限 | 受限内网脚本不启动 | 无法创建临时入站规则 | 使用提升权限的 PowerShell 重试；普通启动可用于隔离测试，但不具备来源限制 |
 
@@ -134,11 +138,15 @@
 | --- | --- | --- |
 | 后端集成 | 健康响应、统一 404、Request ID | `tests/integration/test_documents_api.py` |
 | 后端集成 | 内网 SPA 入口、前端路由回退、静态资源与 API 404 隔离 | `tests/integration/test_intranet_frontend.py` |
-| 应用 fixture | 临时目录、SQLite、FakeIndexRegistry | `tests/conftest.py` |
+| 应用 fixture | 临时目录、SQLite、FakeTreeIndexRegistry | `tests/conftest.py` |
 | 契约 | HealthResponse 和错误模型 | `contracts/openapi.json` |
 | 前端 API | 错误体和 request_id | `frontend/src/api/client.test.ts` |
 
-2026-09-03：测试 fixture 已显式清空 LLM 和 Search 配置，不读取本机真实密钥；此前后端 32 个测试全部通过，本轮聊天定向测试 13/13 通过。OpenAPI 内存比较与生成快照一致。Router 与 Answer 已完成两条真实聊天兼容性冒烟；真实 Tavily 请求本轮返回不可用，尚未获得网页回答成功冒烟。健康状态仍只表示配置完整，不主动访问外部端点。本次内网模式隔离测试、完整后端测试 `46/46`、Ruff 和前端生产构建均已通过；普通启动实际监听 `0.0.0.0:8000`，局域网地址的 health 返回 `200/ok`，首页及 SPA 路由返回 `200`。用户已确认远端验收完成；本轮普通启动未创建防火墙规则。
+2026-09-04：tree-only 改造后后端完整测试 70/70、Python compileall、Ruff、前端生产构建和 38/38 Vitest 通过；健康契约与前端生成类型已重新生成。测试 fixture 显式清空 LLM/Search 配置并使用临时 SQLite 和 FakeTreeIndexRegistry，未读取真实密钥或修改运行数据。
+
+2026-09-04 后端端口配置：`Settings(_env_file=None).app_port` 为 `8001`，Python 编译、`tests/integration/test_intranet_frontend.py` 和内网 PowerShell 脚本语法检查通过；未启动实际监听服务。`npm --prefix frontend run build` 未完成，因为当时环境缺少前端依赖，找不到 `tsc`。
+
+2026-09-04 前端与内网并行配置：前端生产构建、38 项 Vitest、`tests/integration/test_intranet_frontend.py`、PowerShell 脚本语法和 `Settings` 的 `8001`/`5174` 默认值检查均通过。Vite 曾在 `127.0.0.1:5174` 实际启动并返回首页 `200` 后关闭；未启动管理员受限内网服务，因而未修改防火墙规则或运行期业务数据。
 
 ## 12. 已知限制与后续计划
 

@@ -25,6 +25,8 @@ import { formatFileSize } from "../components/UploadDropzone";
 import { partitionLabels } from "../constants/partitions";
 
 const PAGE_SIZE = 20;
+const INDEX_STATUS_POLL_INTERVAL_MS = 1_000;
+const PENDING_REVIEW_CONFIRMATION_LIMIT = 3;
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -74,6 +76,7 @@ export function ReviewPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reconcilingReview, setReconcilingReview] = useState(false);
   const [action, setAction] = useState<
     "approve" | "reject" | "change_partition" | "reopen" | "delete" | null
   >(null);
@@ -86,15 +89,24 @@ export function ReviewPage() {
   const [managementNote, setManagementNote] = useState("");
   const [managementError, setManagementError] = useState<string | null>(null);
 
+  const applyDocumentDetail = useCallback(
+    (detail: DocumentDetailResponse, preservePendingDraft = false) => {
+      setDocument(detail);
+      if (!preservePendingDraft || detail.status !== "pending_review") {
+        setConfirmedPartition(detail.confirmed_partition ?? null);
+        setNote(detail.review_note ?? "");
+      }
+    },
+    [],
+  );
+
   const loadDocument = useCallback(async () => {
     if (!documentId) return;
     setLoading(true);
     setPageError(null);
     try {
       const detail = await documentsApi.get(documentId);
-      setDocument(detail);
-      setConfirmedPartition(detail.confirmed_partition ?? null);
-      setNote(detail.review_note ?? "");
+      applyDocumentDetail(detail);
       setPreview(null);
       setPreviewError(null);
       if (detail.chunk_count > 0) {
@@ -113,11 +125,63 @@ export function ReviewPage() {
     } finally {
       setLoading(false);
     }
-  }, [documentId]);
+  }, [applyDocumentDetail, documentId]);
 
   useEffect(() => {
     void loadDocument();
   }, [loadDocument]);
+
+  const pollingIndexStatus =
+    reconcilingReview || document?.status === "indexing";
+
+  useEffect(() => {
+    if (!documentId || !pollingIndexStatus) return;
+
+    let cancelled = false;
+    let timer: number | undefined;
+    let pendingReviewChecks = 0;
+
+    const poll = async () => {
+      try {
+        const detail = await documentsApi.get(documentId);
+        if (cancelled) return;
+        applyDocumentDetail(detail, true);
+
+        if (detail.status === "ready") {
+          setReconcilingReview(false);
+          setReviewError(null);
+          return;
+        }
+        if (detail.status === "failed") {
+          setReconcilingReview(false);
+          setReviewError(detail.error_message || "索引写入失败，文档未完成入库。");
+          return;
+        }
+        if (detail.status === "pending_review") {
+          pendingReviewChecks += 1;
+          if (pendingReviewChecks >= PENDING_REVIEW_CONFIRMATION_LIMIT) {
+            setReconcilingReview(false);
+            setReviewError("审批请求未开始入库，请确认分区后重新批准。");
+            return;
+          }
+        } else if (detail.status !== "indexing") {
+          setReconcilingReview(false);
+          setReviewError("文档状态已变化，请刷新后确认。");
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+      }
+
+      timer = window.setTimeout(poll, INDEX_STATUS_POLL_INTERVAL_MS);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [applyDocumentDetail, documentId, pollingIndexStatus]);
 
   async function changePage(page: number) {
     if (!documentId) return;
@@ -163,7 +227,11 @@ export function ReviewPage() {
           : current,
       );
     } catch (error) {
-      setReviewError(reviewErrorMessage(error));
+      if (error instanceof ApiTimeoutError) {
+        setReconcilingReview(true);
+      } else {
+        setReviewError(reviewErrorMessage(error));
+      }
     } finally {
       setAction(null);
     }
@@ -289,6 +357,7 @@ export function ReviewPage() {
   }
 
   const reviewable = document.status === "pending_review";
+  const reviewBusy = Boolean(action) || reconcilingReview;
   const previewReady = Boolean(preview) && !previewLoading && !previewError;
   const ready = document.status === "ready" && Boolean(document.confirmed_partition);
   const deletable = ["pending_review", "ready", "rejected", "failed"].includes(
@@ -371,7 +440,7 @@ export function ReviewPage() {
         </div>
 
         <PartitionSelector
-          disabled={!reviewable || Boolean(action)}
+          disabled={!reviewable || reviewBusy}
           layout="list"
           onChange={(value) => setConfirmedPartition(value)}
           value={confirmedPartition}
@@ -380,7 +449,7 @@ export function ReviewPage() {
         <div className="form-field review-note-field">
           <label htmlFor="review-note">审核备注 <span>选填</span></label>
           <textarea
-            disabled={!reviewable || Boolean(action)}
+            disabled={!reviewable || reviewBusy}
             id="review-note"
             maxLength={500}
             onChange={(event) => setNote(event.target.value)}
@@ -392,6 +461,12 @@ export function ReviewPage() {
         </div>
 
         {reviewError && <div className="page-alert review-action-error" role="alert">{reviewError}</div>}
+        {pollingIndexStatus && (
+          <div className="review-action-progress" role="status">
+            <LoaderCircle aria-hidden="true" className="spin" size={17} />
+            <span>索引仍在生成，正在自动确认入库结果。</span>
+          </div>
+        )}
         {reviewable && !previewReady && (
           <div className="page-alert review-action-error" role="alert">
             Chunk 完整预览不可用，无法批准入库。请重新读取或检查解析状态。
@@ -403,7 +478,7 @@ export function ReviewPage() {
             <>
               <button
                 className="reject-button"
-                disabled={Boolean(action)}
+                disabled={reviewBusy}
                 onClick={() => setRejectOpen(true)}
                 type="button"
               >
@@ -412,19 +487,20 @@ export function ReviewPage() {
               </button>
               <button
                 className="review-primary-button"
-                disabled={!confirmedPartition || !previewReady || Boolean(action)}
+                disabled={!confirmedPartition || !previewReady || reviewBusy}
                 onClick={() => void approve()}
                 type="button"
               >
-                {action === "approve" ? (
+                {action === "approve" || reconcilingReview ? (
                   <LoaderCircle aria-hidden="true" className="spin" size={17} />
                 ) : (
                   <Check aria-hidden="true" size={17} />
                 )}
-                {action === "approve" ? "正在入库" : "批准入库"}
+                {action === "approve" || reconcilingReview ? "正在确认" : "批准入库"}
               </button>
             </>
-          ) : document.status === "ready" && document.confirmed_partition ? (
+          ) : document.status === "indexing" ? null : document.status === "ready" &&
+            document.confirmed_partition ? (
             <Link className="review-primary-button" to={`/?partition=${document.confirmed_partition}`}>
               返回问答并选择{partitionLabels[document.confirmed_partition]}
             </Link>

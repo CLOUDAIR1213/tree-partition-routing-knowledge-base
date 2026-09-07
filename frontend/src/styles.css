@@ -1663,23 +1663,20 @@ button:disabled {
 }
 
 .chunk-copy > p {
-  display: -webkit-box;
+  display: block;
   margin: 8px 0 0;
+  max-height: 5.1em;
   overflow: hidden;
   color: #555;
   font-size: 13px;
   line-height: 1.7;
   max-width: 900px;
   overflow-wrap: anywhere;
-  /* Expanding reveals more text without turning raw parser newlines into new visual paragraphs. */
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
 }
 
 .chunk-copy > p[data-expanded="true"] {
-  display: block;
-  overflow: visible;
+  max-height: none;
 }
 
 .parse-quality-section {
@@ -1877,6 +1874,16 @@ button:disabled {
 
 .review-action-error {
   margin-top: 16px;
+}
+
+.review-action-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  margin-top: 16px;
+  color: #3d5f50;
+  font-size: 13px;
 }
 
 .review-actions {

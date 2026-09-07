@@ -92,6 +92,9 @@ describe("application routes and chat", () => {
 
     const sidebar = screen.getByRole("complementary", { name: "会话导航" });
     const sidebarQueries = within(sidebar);
+    expect(
+      sidebarQueries.getByRole("button", { name: "返回问答首页" }),
+    ).toHaveTextContent("树索分区知识库");
     const recent = sidebarQueries.getByRole("region", { name: "最近会话" });
     const knowledge = sidebarQueries.getByRole("button", { name: "知识库" });
     const user = sidebarQueries.getByText("演示用户").closest(".sidebar-user");
@@ -657,6 +660,89 @@ describe("application routes and chat", () => {
         note: "调整为技术",
       }),
     );
+  });
+
+  it("reconciles a timed-out approval until indexing becomes ready", async () => {
+    const documentId = "doc_0123456789abcdef01234567";
+    const pendingDetail = {
+      document_id: documentId,
+      original_filename: "policy.md",
+      title: "费用制度",
+      selected_partition: "finance",
+      confirmed_partition: null,
+      status: "pending_review",
+      chunk_count: 1,
+      created_at: "2026-09-01T08:00:00Z",
+      updated_at: "2026-09-01T08:00:00Z",
+      mime_type: "text/markdown",
+      size_bytes: 1024,
+      reviewed_at: null,
+      review_note: null,
+      error_code: null,
+      error_message: null,
+      parse_quality: null,
+      request_id: "req-detail",
+    };
+    const preview = {
+      document_id: documentId,
+      title: "费用制度",
+      selected_partition: "finance",
+      confirmed_partition: null,
+      status: "pending_review",
+      chunk_count: 1,
+      items: [{
+        chunk_id: "chunk-1",
+        chunk_index: 0,
+        title: "报销",
+        section_path: "费用 > 报销",
+        page_start: null,
+        page_end: null,
+        text: "测试 Chunk 内容",
+        preview: "测试 Chunk 内容",
+      }],
+      total: 1,
+      limit: 20,
+      offset: 0,
+      parse_quality: null,
+      request_id: "req-preview",
+    };
+    let detailReads = 0;
+    let reviewWrites = 0;
+    vi.spyOn(window, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/preview")) {
+        return new Response(JSON.stringify(preview), { status: 200 });
+      }
+      if (url.endsWith("/review") && init?.method === "POST") {
+        reviewWrites += 1;
+        throw new DOMException("request timed out", "AbortError");
+      }
+      detailReads += 1;
+      if (detailReads === 1) {
+        return new Response(JSON.stringify(pendingDetail), { status: 200 });
+      }
+      const status = detailReads === 2 ? "indexing" : "ready";
+      return new Response(JSON.stringify({
+        ...pendingDetail,
+        status,
+        confirmed_partition: "finance",
+        reviewed_at: "2026-09-01T09:00:00Z",
+        updated_at: "2026-09-01T09:00:00Z",
+      }), { status: 200 });
+    });
+
+    const user = userEvent.setup();
+    renderApp(`/knowledge/documents/${documentId}`);
+
+    const approveButton = await screen.findByRole("button", { name: "批准入库" });
+    await user.click(screen.getByRole("radio", { name: /财务/ }));
+    await user.click(approveButton);
+
+    expect(await screen.findByText("入库中")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在自动确认入库结果");
+    expect(await screen.findByText("已入库", {}, { timeout: 2_500 })).toBeInTheDocument();
+    expect(reviewWrites).toBe(1);
+    expect(screen.queryByText(/请手动重试/)).not.toBeInTheDocument();
   });
 
   it("blocks approval when the Chunk preview cannot be loaded", async () => {

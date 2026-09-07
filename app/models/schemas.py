@@ -337,10 +337,16 @@ class DeleteDocumentResponse(BaseModel):
     request_id: str
 
 
+class IndexLevelHealth(BaseModel):
+    document: Literal["ready", "error"]
+    section: Literal["ready", "error"]
+    chunk: Literal["ready", "error"]
+
+
 class IndexHealth(BaseModel):
-    finance: Literal["ready", "error"]
-    hr: Literal["ready", "error"]
-    tech: Literal["ready", "error"]
+    finance: IndexLevelHealth
+    hr: IndexLevelHealth
+    tech: IndexLevelHealth
 
 
 class HealthResponse(BaseModel):

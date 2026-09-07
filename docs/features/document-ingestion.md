@@ -73,7 +73,7 @@ PDF 按页生成 Section 并记录空白页；DOCX 按 Heading 层级读取段�
 | SQLite | `chunk_candidates` | 写 | 完整 Chunk、Embedding 文本和定位信息 |
 | 文件 | `data/raw/<document_id>/` | 写 | 保存原文件 |
 | 文件 | `data/staging/<document_id>/parse.json` | 读写 | 保存 Section、Chunk ID、解析质量和内容建议快照 |
-| txtai | `data/indexes/*` | 无 | 接入阶段禁止写入 |
+| txtai | `data/indexes-hierarchical/*/*` | 无 | 接入阶段禁止写入任何树索层 |
 
 接入包含多次 SQLite commit 和文件系统写入，不是原子事务。解析失败会把文档标记为 `failed`，但当前不会自动删除已保存的 raw/staging 目录。
 

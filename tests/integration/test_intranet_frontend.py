@@ -14,7 +14,7 @@ def test_intranet_mode_serves_spa_without_masking_api_404(tmp_path, fake_registr
         data_root=data_root,
         raw_root=data_root / "raw",
         staging_root=data_root / "staging",
-        index_root=data_root / "indexes",
+        hierarchical_index_root=data_root / "indexes-hierarchical",
         fixture_root=data_root / "fixtures",
         metadata_database_url=(
             f"sqlite+aiosqlite:///{(data_root / 'metadata' / 'knowledge.db').as_posix()}"
@@ -27,7 +27,7 @@ def test_intranet_mode_serves_spa_without_masking_api_404(tmp_path, fake_registr
         web_search_enabled=False,
     )
 
-    with TestClient(create_app(settings, index_registry=fake_registry)) as client:
+    with TestClient(create_app(settings, tree_index_registry=fake_registry)) as client:
         assert client.get("/").text == '<div id="root">app</div>'
         assert client.get("/knowledge").text == '<div id="root">app</div>'
         assert client.get("/assets/app.js").text == "console.log('app')"

@@ -69,7 +69,7 @@ export function AppSidebar({ open, onClose }: AppSidebarProps) {
             <span className="brand-mark">
               <Database aria-hidden="true" size={19} strokeWidth={2} />
             </span>
-            <span>分区知识库</span>
+            <span>树索分区知识库</span>
           </button>
           <button
             aria-label="关闭侧栏"

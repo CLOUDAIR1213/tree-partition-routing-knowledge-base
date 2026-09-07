@@ -22,7 +22,7 @@
 3. 所有文件使用同一套公司事实、岗位、系统、金额、时限和版本关系，不存在互相矛盾的规则。
 4. 主制度使用 DOCX，新增补充文件使用 Markdown；现有解析器能识别预期章节。
 5. 生成事实矩阵、上传清单和自然语言验收问题，但不自动上传、不批准索引、不运行 seed。
-6. 不修改 `data/raw`、`data/staging`、`data/indexes`、`data/metadata` 中的现有数据。
+6. 不修改 `data/raw`、`data/staging`、`data/indexes-hierarchical`、`data/indexes`、`data/metadata` 中的现有数据。
 
 ### 1.2 Luna 适配结论
 
@@ -104,8 +104,8 @@
 | `app/services/ingestion.py` | 保存文件、解析、Chunking 和状态推进 | FileStorage、Parser、Chunker、ORM |
 | `app/services/parser.py` | DOCX/Markdown 章节解析 | `python-docx`、文本解析 |
 | `app/services/chunker.py` | 按章节和 Token 阈值生成稳定 Chunk | Chunk 配置、SHA-256 |
-| `app/services/review.py` | 人工批准后写入分区索引 | SQLite、IndexRegistry |
-| `app/services/index_registry.py` | Finance/HR/Tech 三个 txtai 索引 | txtai Embeddings、文件系统 |
+| `app/services/review.py` | 人工批准后写入三层分区树索 | SQLite、HierarchicalIndexRegistry |
+| `app/services/hierarchical_index.py` | Finance/HR/Tech 三层 txtai 树索 | txtai Embeddings、文件系统 |
 
 ### 5.1 文件编写对解析器的约束
 
@@ -125,9 +125,7 @@
 | SQLite | `data/metadata/knowledge.db` | 本任务禁止写 | 用户上传后保存文档状态、分区和 Chunk 正文 |
 | 原文件 | `data/raw/<document_id>/` | 本任务禁止写 | 只允许现有上传服务写入 |
 | 解析快照 | `data/staging/<document_id>/parse.json` | 本任务禁止写 | 只允许现有接入服务写入 |
-| txtai | `data/indexes/finance/` | 本任务禁止写 | 财务 `ready` 文档检索索引 |
-| txtai | `data/indexes/hr/` | 本任务禁止写 | 人事 `ready` 文档检索索引 |
-| txtai | `data/indexes/tech/` | 本任务禁止写 | 技术 `ready` 文档检索索引 |
+| txtai | `data/indexes-hierarchical/<partition>/<level>/` | 本任务禁止写 | 三分区 document、section、chunk 检索索引 |
 | seed 源 | `data/fixtures/*.jsonl` | 本任务禁止改 | 自动化演示输入，不作为新业务上传包 |
 
 SQLite、原文件、解析快照和 txtai 不构成同一事务。执行 Agent 只制作源文件，不负责跨存储一致性；用户通过现有审核流程触发系统自身的写入与补偿。
@@ -181,7 +179,7 @@ deliverables/knowledge-upload/
 | `docs/README.md` | 文档导航和任务矩阵 | `shared` | 新增或移动本文时同步导航 |
 | `app/services/parser.py`、`app/services/chunker.py` | 文件解析和 Chunking 行为 | `shared` | 本任务只读取，不修改；若必须改动需扩展为代码任务并补测试 |
 | `contracts/openapi.json`、`frontend/src/api/generated.ts` | HTTP 契约和生成类型 | `generated` | 本任务禁止手工修改 |
-| `data/raw/`、`data/staging/`、`data/indexes/`、`data/metadata/` | 当前运行期业务数据 | `runtime-data` | 内容制作和静态验证不得写入 |
+| `data/raw/`、`data/staging/`、`data/indexes-hierarchical/`、`data/indexes/`、`data/metadata/` | 当前与退役运行数据 | `runtime-data` | 内容制作和静态验证不得写入 |
 | `data/fixtures/`、`tests/fixtures/` | seed 和自动化测试 fixture | `shared` | 本任务不修改；真实业务内容与隔离测试 fixture 分开维护 |
 | 旧运行数据备份、删除、索引重建 | 迁移操作 | `approval-required` | 必须由用户另行明确授权具体范围和恢复方案 |
 
@@ -332,14 +330,14 @@ deliverables/knowledge-upload/
 - 已使用现有 `StandardDocumentParser` 和 `SectionChunker(550, 100, 700, 75)` 做只读验证：10/10 文件解析通过，Section 顺序有效，Chunk 序号连续，合计 71 个 Chunk，字符数合计 16,511。
 - 已完成文件扩展名、大小、固定事实、章节要求和敏感信息扫描；未发现实际个人信息、凭据、私钥、内网 IP 或生产 URL。
 - DOCX 结构审计已通过；当前环境未找到 LibreOffice/`soffice`，因此无法完成 `render_docx.py` 的 PNG 视觉检查，不能将视觉渲染标记为通过。
-- 未运行测试、seed、上传、审核、真实 txtai 写入或模型批量问答；未修改 `data/raw`、`data/staging`、`data/indexes`、`data/metadata`。
+- 未运行测试、seed、上传、审核、真实 txtai 写入或模型批量问答；未修改 `data/raw`、`data/staging`、`data/indexes-hierarchical`、`data/indexes`、`data/metadata`。
 
 ## 12. 已知限制与后续计划
 
 - 当前系统已有单文档删除、改分区和重新审核 API；仍没有普通失败重试、重新解析和完整索引重建 API。
 - 当前没有认证和分区级权限，仿真文件也只应上传到可信本地环境。
 - 当前 DOCX 表格语义位置解析有限，因此本轮关键事实以段落为主。
-- 当前生产 IndexRegistry 已逐个验证全部 Chunk ID；真实大文档的验证性能仍需观测。
+- 当前 HierarchicalIndexRegistry 已逐个验证三层 ID；真实大文档的验证性能仍需观测。
 - 新旧文档并存期间可能发生检索冲突。清理前需设计 SQLite、原文件、staging 和三个索引的一致备份/恢复方案。
 - 10 个文件生成和静态验证已完成，当前状态为“待用户上传”；只有用户完成上传、审核、单分区、双分区、手动指定分区和联网兜底聚焦验收后，才能更新为“已实现”。
 
@@ -354,7 +352,7 @@ deliverables/knowledge-upload/
 
 只在 deliverables/knowledge-upload/ 下创建本文规定的 10 个上传文件和 4 个配套 Markdown 文件。先完成 fact-matrix.md，再写业务文件。DOCX 必须使用真实 Heading 1/2 样式，关键事实使用普通段落，不依赖表格。所有业务事实必须符合本文固定公司事实和唯一权威归属。
 
-完成后使用现有 Parser 和 Chunker 做只读静态验证，并把实际文件数、字符数、Section 数、Chunk 数和发现的问题记录到 deliverables/knowledge-upload/README.md。不得调用上传或审核 API，不得运行 seed，不得修改 data/fixtures 或 tests/fixtures，不得写入或删除 data/raw、data/staging、data/indexes、data/metadata，不得清理现有知识库。
+完成后使用现有 Parser 和 Chunker 做只读静态验证，并把实际文件数、字符数、Section 数、Chunk 数和发现的问题记录到 deliverables/knowledge-upload/README.md。不得调用上传或审核 API，不得运行 seed，不得修改 data/fixtures 或 tests/fixtures，不得写入或删除 data/raw、data/staging、data/indexes-hierarchical、data/indexes、data/metadata，不得清理现有知识库。
 
 最终报告列出创建的文件、静态验证结果、仍需用户人工上传和确认的事项。发现当前代码或文档与本文冲突时先报告，不要扩大到应用代码修改。
 ```

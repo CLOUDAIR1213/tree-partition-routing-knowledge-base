@@ -919,28 +919,13 @@
       "IndexHealth": {
         "properties": {
           "finance": {
-            "enum": [
-              "ready",
-              "error"
-            ],
-            "title": "Finance",
-            "type": "string"
+            "$ref": "#/components/schemas/IndexLevelHealth"
           },
           "hr": {
-            "enum": [
-              "ready",
-              "error"
-            ],
-            "title": "Hr",
-            "type": "string"
+            "$ref": "#/components/schemas/IndexLevelHealth"
           },
           "tech": {
-            "enum": [
-              "ready",
-              "error"
-            ],
-            "title": "Tech",
-            "type": "string"
+            "$ref": "#/components/schemas/IndexLevelHealth"
           }
         },
         "required": [
@@ -949,6 +934,41 @@
           "tech"
         ],
         "title": "IndexHealth",
+        "type": "object"
+      },
+      "IndexLevelHealth": {
+        "properties": {
+          "chunk": {
+            "enum": [
+              "ready",
+              "error"
+            ],
+            "title": "Chunk",
+            "type": "string"
+          },
+          "document": {
+            "enum": [
+              "ready",
+              "error"
+            ],
+            "title": "Document",
+            "type": "string"
+          },
+          "section": {
+            "enum": [
+              "ready",
+              "error"
+            ],
+            "title": "Section",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "section",
+          "chunk"
+        ],
+        "title": "IndexLevelHealth",
         "type": "object"
       },
       "ParseQualityReport": {

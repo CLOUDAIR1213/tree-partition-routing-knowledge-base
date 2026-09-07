@@ -1,4 +1,6 @@
+import logging
 from io import BytesIO
+from sqlite3 import connect
 
 from docx import Document
 from reportlab.pdfgen import canvas
@@ -12,7 +14,10 @@ def upload_markdown(client, content: bytes | None = None, filename: str = "polic
     )
 
 
-def test_upload_preview_and_approve_into_confirmed_partition(client, fake_registry):
+def test_upload_preview_and_approve_into_confirmed_partition(
+    client, fake_registry, caplog
+):
+    caplog.set_level(logging.INFO, logger="app.services.review")
     upload = upload_markdown(client)
     assert upload.status_code == 201, upload.text
     payload = upload.json()
@@ -53,6 +58,11 @@ def test_upload_preview_and_approve_into_confirmed_partition(client, fake_regist
     assert fake_registry.upsert_calls == ["tech"]
     assert fake_registry.rows["finance"] == {}
     assert fake_registry.rows["hr"] == {}
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("level=chunk operation=upsert" in message for message in messages)
+    assert any("level=document operation=upsert" in message for message in messages)
+    assert any("level=section operation=upsert" in message for message in messages)
+    assert any("review_index_completed" in message for message in messages)
 
 
 def test_upload_without_title_uses_filename_stem_not_first_section_heading(client):
@@ -149,7 +159,10 @@ def test_list_pagination_and_health(client):
     assert listing.json()["offset"] == 1
     health = client.get("/api/v1/health")
     assert health.status_code == 200
-    assert health.json()["indexes"] == {"finance": "ready", "hr": "ready", "tech": "ready"}
+    assert health.json()["indexes"] == {
+        partition: {"document": "ready", "section": "ready", "chunk": "ready"}
+        for partition in ("finance", "hr", "tech")
+    }
     assert health.json()["router"] == "not_configured"
     assert health.json()["answer"] == "not_configured"
     assert health.json()["web_search"] == "disabled"
@@ -486,3 +499,108 @@ def test_management_actions_reject_invalid_states_and_unchanged_partition(client
     )
     assert unchanged.status_code == 422
     assert unchanged.json()["code"] == "PARTITION_UNCHANGED"
+
+
+def test_tree_nodes_follow_approval_partition_change_and_reopen(
+    hierarchical_client,
+    fake_registry,
+    fake_hierarchy_registry,
+):
+    document_id = upload_markdown(
+        hierarchical_client,
+        b"# Runbook\n\nInitial technical process.\n\n## Recovery\n\nRecovery steps.",
+        "tree-lifecycle.md",
+    ).json()["document_id"]
+
+    approved = hierarchical_client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "finance"},
+    )
+
+    assert approved.status_code == 200, approved.text
+    assert fake_registry.rows["finance"]
+    assert fake_hierarchy_registry.rows[("finance", "document")]
+    assert fake_hierarchy_registry.rows[("finance", "section")]
+    database_path = (
+        hierarchical_client.app.state.settings.data_root / "metadata" / "knowledge.db"
+    )
+    with connect(database_path) as database:
+        persisted = database.execute(
+            "SELECT parent_id, level, partition, document_id, indexed_at "
+            "FROM hierarchy_nodes ORDER BY level, id"
+        ).fetchall()
+    document_nodes = [row for row in persisted if row[1] == "document"]
+    section_nodes = [row for row in persisted if row[1] == "section"]
+    assert len(document_nodes) == 1
+    assert section_nodes
+    assert document_nodes[0][0] is None
+    assert document_nodes[0][1:4] == ("document", "finance", document_id)
+    assert document_nodes[0][4] is not None
+    assert all(row[0] == f"hdoc:{document_id}" for row in section_nodes)
+    assert all(row[1:4] == ("section", "finance", document_id) for row in section_nodes)
+    assert all(row[4] is not None for row in section_nodes)
+
+    moved = hierarchical_client.post(
+        f"/api/v1/documents/{document_id}/partition",
+        json={"confirmed_partition": "tech"},
+    )
+
+    assert moved.status_code == 200, moved.text
+    assert fake_hierarchy_registry.rows[("tech", "document")]
+    assert fake_hierarchy_registry.rows[("tech", "section")]
+    assert fake_hierarchy_registry.rows[("finance", "document")] == {}
+    assert fake_hierarchy_registry.rows[("finance", "section")] == {}
+    assert fake_hierarchy_registry.rows[("hr", "document")] == {}
+    assert fake_hierarchy_registry.rows[("hr", "section")] == {}
+
+    reopened = hierarchical_client.post(
+        f"/api/v1/documents/{document_id}/reopen-review",
+        json={"note": "Recheck tree"},
+    )
+
+    assert reopened.status_code == 200, reopened.text
+    assert all(not rows for rows in fake_hierarchy_registry.rows.values())
+
+
+def test_tree_nodes_are_removed_when_a_ready_document_is_deleted(
+    hierarchical_client,
+    fake_hierarchy_registry,
+):
+    document_id = upload_markdown(
+        hierarchical_client,
+        b"# Disposable\n\nRemove tree nodes with this document.",
+        "tree-delete.md",
+    ).json()["document_id"]
+    assert hierarchical_client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "tech"},
+    ).status_code == 200
+
+    deleted = hierarchical_client.delete(f"/api/v1/documents/{document_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert all(not rows for rows in fake_hierarchy_registry.rows.values())
+
+
+def test_tree_index_failure_compensates_chunk_and_node_writes(
+    hierarchical_client,
+    fake_registry,
+    fake_hierarchy_registry,
+):
+    document_id = upload_markdown(
+        hierarchical_client,
+        b"# Tree failure\n\nCompensate every index surface.",
+        "tree-failure.md",
+    ).json()["document_id"]
+    fake_hierarchy_registry.fail_next_node_upsert = True
+
+    response = hierarchical_client.post(
+        f"/api/v1/documents/{document_id}/review",
+        json={"action": "approve", "confirmed_partition": "tech"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "INDEX_WRITE_FAILED"
+    assert response.json()["details"]["compensation"] == "compensation_succeeded"
+    assert fake_registry.rows["tech"] == {}
+    assert all(not rows for rows in fake_hierarchy_registry.rows.values())
